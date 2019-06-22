@@ -1,0 +1,72 @@
+name:                video-server
+version:             0.2.0.0
+github:              "r-gr/sc-video-server"
+license:             BSD3
+author:              "Rory Green"
+maintainer:          "rng24@alumni.cam.ac.uk"
+copyright:           "2019 Rory Green"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/r-gr/sc-video-server#readme>
+
+dependencies:
+- aeson
+- base >= 4.7 && < 5
+- binary
+- bytestring
+- containers
+- directory
+- ffmpeg-light
+- file-embed
+- fmt
+- GLFW-b
+- MissingH
+- JuicyPixels
+- monad-loops
+- ObjectName
+- OpenGL
+- OpenGLRaw
+# pretty-simple: pretty printing in development via Text.Pretty.Simple
+# (pPrint) for any types deriving/implementing Show.
+- pretty-simple
+- random
+- signal
+- split
+- stm
+- vector
+- zeromq4-haskell
+
+library:
+  source-dirs: src
+
+executables:
+  sc-video-server-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - sc-video-server
+
+#tests:
+#  sc-video-server-test:
+#    main:                Spec.hs
+#    source-dirs:         test
+#    ghc-options:
+#    - -threaded
+#    - -rtsopts
+#    - -with-rtsopts=-N
+#    dependencies:
+#    - sc-video-server
