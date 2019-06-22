@@ -1,6 +1,6 @@
 name:                video-server
 version:             0.2.0.0
-github:              "r-gr/sc-video-server"
+github:              "r-gr/video-server"
 license:             BSD3
 author:              "Rory Green"
 maintainer:          "rng24@alumni.cam.ac.uk"
@@ -17,7 +17,7 @@ extra-source-files:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/r-gr/sc-video-server#readme>
+description:         Please see the README on GitHub at <https://github.com/r-gr/video-server#readme>
 
 dependencies:
 - aeson
@@ -50,7 +50,7 @@ library:
   source-dirs: src
 
 executables:
-  sc-video-server-exe:
+  video-server-exe:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
@@ -58,10 +58,10 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - sc-video-server
+    - video-server
 
 #tests:
-#  sc-video-server-test:
+#  video-server-test:
 #    main:                Spec.hs
 #    source-dirs:         test
 #    ghc-options:
@@ -69,4 +69,4 @@ executables:
 #    - -rtsopts
 #    - -with-rtsopts=-N
 #    dependencies:
-#    - sc-video-server
+#    - video-server
