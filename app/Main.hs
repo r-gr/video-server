@@ -86,7 +86,10 @@ main = withContext $ \ctx -> do
 
         Just m -> atomically $ writeTQueue msgQIn m
 
-  let glUGenNames = map shaderName ugenShaderFns
+  -- use $! to force shader files to be read from disk at this point if that is
+  -- the result of ugenShaderFns, otherwise there may be an undesirable pause
+  -- when the first GraphNew is received.
+  let glUGenNames = map shaderName $! ugenShaderFns
 
   installHandler sigABRT $ interruptHandler msgQIn
   installHandler sigINT  $ interruptHandler msgQIn
