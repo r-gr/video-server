@@ -212,8 +212,8 @@ main = withContext $ \ctx -> do
           forM_ (IntMap.keys msgQs) $ \wID ->
             forwardMsg messageQueues wID (GLWindowFree wID)
 
-          shutdown ctx -- explicitly close ZeroMQ context
-          exitSuccess
+        shutdown ctx -- explicitly close ZeroMQ context
+        exitSuccess
   where
     interruptHandler msgQIn _signal = atomically $ writeTQueue msgQIn $ InternalServerQuit
 
