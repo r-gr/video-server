@@ -14,21 +14,20 @@ import Codec.Picture
 import qualified Data.Vector as V
 import qualified Graphics.Rendering.OpenGL as GL
 
-import Unit
-import Graph
+import Types
 
 
 type FrameGrabber p = IO (Maybe (Image p, Double))
 class TextureClass t where
   texObj      :: t -> GL.TextureObject
   texUnit     :: t -> GL.TextureUnit
-  assignments :: t -> [(GraphID, UnitID, Int)]
+  assignments :: t -> [(NodeID, UnitID, Int)]
   texID       :: t -> Int
 data Texture = Vid VideoTexture | Img ImageTexture | LVd LoadedVideo
 data VideoTexture
   = VideoTexture { vTexObj        :: GL.TextureObject
                  , vTexUnit       :: GL.TextureUnit
-                 , vAssignments   :: [(GraphID, UnitID, Int)]
+                 , vAssignments   :: [(NodeID, UnitID, Int)]
                  , vID            :: Int
                  , vLoop          :: Bool
                  , vFilePath      :: FilePath
@@ -41,7 +40,7 @@ data VideoTexture
                  }
 data LoadedVideo
   = LoadedVideo { lvTexUnit       :: GL.TextureUnit
-                , lvAssignments   :: [(GraphID, UnitID, Int)]
+                , lvAssignments   :: [(NodeID, UnitID, Int)]
                 , lvID            :: Int
                 , lvLoop          :: Bool
                 , lvFrames        :: V.Vector (GL.TextureObject, Double)
@@ -54,7 +53,7 @@ data LoadedVideo
 data ImageTexture
   = ImageTexture { iTexObj      :: GL.TextureObject
                  , iTexUnit     :: GL.TextureUnit
-                 , iAssignments :: [(GraphID, UnitID, Int)]
+                 , iAssignments :: [(NodeID, UnitID, Int)]
                  , iID          :: Int
                  , iImageRGB8   :: (Image PixelRGB8)
                  , iIsBound     :: Bool
@@ -116,7 +115,7 @@ instance TextureClass Texture where
   texID (LVd t) = texID t
 
 
-updateAssignments :: [(GraphID, UnitID, Int)] -> Texture -> Texture
+updateAssignments :: [(NodeID, UnitID, Int)] -> Texture -> Texture
 updateAssignments assigns tex =
   if assigns == assignments tex then
     tex

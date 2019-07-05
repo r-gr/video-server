@@ -22,17 +22,15 @@ import Data.Word
 import GHC.Generics
 import System.ZMQ4 (Socket, Sub, receive)
 
-import Graph
 import Texture
-import Unit
-import Window (WindowID)
+import Types
 
 
 data Msg
-  = GraphNew  { nodeID :: GraphID
+  = GraphNew  { nodeID :: NodeID
               , units  :: [Unit]
               }
-  | GraphFree { nodeID :: GraphID }
+  | GraphFree { nodeID :: NodeID }
   | GLWindowNew  { windowID     :: WindowID
                  , windowWidth  :: Int
                  , windowHeight :: Int
@@ -73,35 +71,35 @@ data DataMsg = UnitDataMsg    RawUnitData
 
 data RawUnitData = RawUnitData
   { rawUDataInput   :: !Word16
-  , rawUDataGraphID :: !Int32
+  , rawUDataNodeID :: !Int32
   , rawUDataUnitID  :: !Int32
   , rawUDataValue   :: !Float
   } deriving (Show)
 
 data RawAssignVideo = RawAssignVideo
   { rawAVInput   :: !Word16
-  , rawAVGraphID :: !Int32
+  , rawAVNodeID :: !Int32
   , rawAVUnitID  :: !Int32
   , rawAVVideoID :: !Int32
   } deriving (Show)
 
 data RawAssignImage = RawAssignImage
   { rawAIInput   :: !Word16
-  , rawAIGraphID :: !Int32
+  , rawAINodeID :: !Int32
   , rawAIUnitID  :: !Int32
   , rawAIImageID :: !Int32
   } deriving (Show)
 
 data UnitData = UnitData
-  { uDataGraphID :: Int
+  { uDataNodeID :: Int
   , uDataUnitID  :: Int
   , uDataInput   :: Int
   , uDataValue   :: Float
   } deriving (Show)
 
 data TextureUpdate
-  = AssignVideo (GraphID, UnitID, Int) Int
-  | AssignImage (GraphID, UnitID, Int) Int
+  = AssignVideo (NodeID, UnitID, Int) Int
+  | AssignImage (NodeID, UnitID, Int) Int
   deriving (Show)
 
 

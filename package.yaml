@@ -26,6 +26,7 @@ dependencies:
 - bytestring
 - containers
 - directory
+- extra
 - ffmpeg-light
 - file-embed
 - fmt

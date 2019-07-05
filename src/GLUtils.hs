@@ -41,7 +41,7 @@ import qualified Graphics.UI.GLFW as GLFW
 
 import Shader (uniformName)
 import Texture
-import Window
+import Types
 
 
 withWindow :: Int -> Int -> String -> (GLFW.Window -> IO ()) -> IO ()

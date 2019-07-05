@@ -9,7 +9,8 @@ module Shader ( Shader(..)
               , screenVertShader
               , screenFragShader
               , uniformName
-              , generateGLSLCode
+              , generateFragShader
+              -- , generateGLSLCode
               ) where
 
 
@@ -19,8 +20,8 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (pack, unpack)
 import Data.FileEmbed (embedDir, embedFile)
 import Data.Foldable (foldl')
-import Data.IntMap (IntMap)
-import qualified Data.IntMap.Strict as IntMap
+-- import Data.IntMap (IntMap)
+-- import qualified Data.IntMap.Strict as IntMap
 import Data.List (nub)
 import Data.List.Split (splitOneOf)
 import Data.List.Utils (endswith)
@@ -29,9 +30,7 @@ import System.Directory
 import System.IO.Error (catchIOError)
 import System.IO.Unsafe (unsafePerformIO)
 
-import Graph
-import Node
-import Unit
+import Types
 
 
 data Shader = Shader { shaderName :: String
@@ -107,89 +106,72 @@ parseFnSig glslFn =
     argTypes (x:_:xs) = x : argTypes xs
 
 
-{- Generate the GLSL code for the fragment shader from the node tree.
+{- Generate the fragment shader (GLSL) code from the sub-graph.
 -}
-generateGLSLCode :: IntMap Node -> String
-generateGLSLCode nodes =
-  concat [ glslHeader
-         , glslUniforms nodes
-         , glslFunctions nodes
-         , "void main() {\n"
-         , "    FragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
-         , glslMain nodes
-         , "}\n"
-         ]
+generateFragShader :: SubGraph -> FragShader
+generateFragShader (SubGraph units inputs output) =
+  let fsCode = concat [ fsHeader
+                      , fsUniforms units
+                      , fsFunctions units
+                      , "void main() {\n"
+                      , "    FragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
+                      , fsMain units
+                      , "}\n"
+                      ]
+  in  FragShader fsCode inputs output
   where
-    glslHeader = concat [ "#version 430 core\n\n"
-                        , "in  vec2 TexCoord;\n"
-                        , "out vec4 FragColor;\n\n"
-                        , "uniform sampler2D sc_PrevFrame;\n\n"
-                        ]
+    fsHeader = concat [ "#version 430 core\n\n"
+                      , "in  vec2 TexCoord;\n"
+                      , "out vec4 FragColor;\n\n"
+                      , "uniform sampler2D sc_PrevFrame;\n\n"
+                      ]
 
 
-glslUniforms :: IntMap Node -> String
-glslUniforms nodes = IntMap.foldlWithKey' nodeUniforms "" nodes
+fsUniforms :: Graph -> String
+fsUniforms graph = graphUniforms graph
   where
-    nodeUniforms :: String -> NodeID -> Node -> String
-    nodeUniforms glslString nID node =
-      case node of Node  graph  -> glslString ++ (graphUniforms nID graph)
-                   Group nodes' -> glslString ++ (glslUniforms nodes')
-
-    graphUniforms :: NodeID -> Graph -> String
-    graphUniforms nID (_gID, units) =
+    graphUniforms :: Graph -> String
+    graphUniforms units =
       let outWires = concatMap unitOutputs units
-      in  concatMap (unitUniforms nID outWires) units
+      in  concatMap (unitUniforms outWires) units
 
-    unitUniforms :: NodeID -> [WireID] -> Unit -> String
-    unitUniforms nID outWires unit =
+    unitUniforms :: [WireID] -> Unit -> String
+    unitUniforms outWires unit =
       let inWires = unitInputs unit
           inputs = getShaderInputs $ unitName unit
           uniformInputs = map (\(i, glslType, _w) -> (i, glslType))
                         $ filter (\(_i, _type, w) -> notElem w outWires)
                             (zip3 [0::Int ..] inputs inWires)
       in  flip concatMap uniformInputs $ \(i, glslType) ->
-            "uniform "+|glslType|+" in_Graph_"+|nID|+"_Unit_"+|unitID unit|+"_"+|i|+";\n"
+            "uniform "+|glslType|+" in_Graph_"+|nodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+";\n"
 
 
-glslFunctions :: IntMap Node -> String
-glslFunctions nodes = (concatMap getShaderFn).nub $ functionNames nodes []
+fsFunctions :: Graph -> String
+fsFunctions units = (concatMap getShaderFn).nub $ map unitName units
+
+
+fsMain :: Graph -> String
+fsMain graph = graphCode graph
   where
-    functionNames :: IntMap Node -> [String] -> [String]
-    functionNames nodes' funs = IntMap.foldr nodeFuncs funs nodes'
-
-    nodeFuncs :: Node -> [String] -> [String]
-    nodeFuncs node funs =
-      case node of Node  (_, units) -> foldr (\u fs -> (unitName u) : fs) funs units
-                   Group nodes''    -> functionNames nodes'' funs
-
-
-glslMain :: IntMap Node -> String
-glslMain nodes = IntMap.foldlWithKey' nodeCode "" nodes
-  where
-    nodeCode :: String -> NodeID -> Node -> String
-    nodeCode glslString nID node =
-      case node of Node  graph  -> glslString ++ (graphCode nID graph)
-                   Group nodes' -> glslString ++ (glslMain nodes')
-
-    graphCode :: NodeID -> Graph -> String
-    graphCode nID (_gID, units) =
+    graphCode :: Graph -> String
+    graphCode units =
       let outWires = concatMap unitOutputs units
-      in  concatMap (unitCode nID outWires) units
+      in  concatMap (unitCode outWires) units
 
-    unitCode :: NodeID -> [WireID] -> Unit -> String
-    unitCode nID outWires unit =
+    unitCode :: [WireID] -> Unit -> String
+    unitCode outWires unit =
       -- Note: this assumes each UGen has at least one output, including the
       --       GLOut UGen.
       foldl' (\func str -> str ++ func) ""
-             $ map (functionCall nID unit outWires) (unitOutputs unit)
+             $ map (functionCall unit outWires) (unitOutputs unit)
 
-    functionCall :: NodeID -> Unit -> [WireID] -> WireID -> String
-    functionCall nID unit outWires wireID =
+    functionCall :: Unit -> [WireID] -> WireID -> String
+    functionCall unit outWires wireID =
       let name = unitName unit
           isGLOut = name == "GLOut"
           assignment = case name of
             "GLOut" -> "    FragColor = " :: String
-            _       -> "    "+|fnType name|+" Graph_"+|nID|+"_Wire_"+|wireID|+" = "
+            _       -> "    "+|fnType name|+" Graph_"+|nodeID unit|+"_Wire_"+|wireID|+" = "
       in  concat [ assignment
                  , unitName unit
                  , if isGLOut then "(FragColor, " else "("
@@ -202,9 +184,109 @@ glslMain nodes = IntMap.foldlWithKey' nodeCode "" nodes
           case inWires of
             [] -> ""
             (i, w):[] -> if elem w outWires
-                           then "Graph_"+|nID|+"_Wire_"+|w|+""
-                           else "in_Graph_"+|nID|+"_Unit_"+|unitID unit|+"_"+|i|+""
+                           then "Graph_"+|nodeID unit|+"_Wire_"+|w|+""
+                           else "in_Graph_"+|nodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+""
             hd:tl -> ""+|inputList [hd]|+", "+|inputList tl|+""
+
+
+{- Generate the GLSL code for the fragment shader from the node tree.
+-}
+-- generateGLSLCode :: IntMap Node -> String
+-- generateGLSLCode nodes =
+--   concat [ glslHeader
+--          , glslUniforms nodes
+--          , glslFunctions nodes
+--          , "void main() {\n"
+--          , "    FragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
+--          , glslMain nodes
+--          , "}\n"
+--          ]
+--   where
+--     glslHeader = concat [ "#version 430 core\n\n"
+--                         , "in  vec2 TexCoord;\n"
+--                         , "out vec4 FragColor;\n\n"
+--                         , "uniform sampler2D sc_PrevFrame;\n\n"
+--                         ]
+
+
+-- glslUniforms :: IntMap Node -> String
+-- glslUniforms nodes = IntMap.foldlWithKey' nodeUniforms "" nodes
+--   where
+--     nodeUniforms :: String -> NodeID -> Node -> String
+--     nodeUniforms glslString nID node =
+--       case node of Node  graph  -> glslString ++ (graphUniforms nID graph)
+--                    Group nodes' -> glslString ++ (glslUniforms nodes')
+
+--     graphUniforms :: NodeID -> Graph -> String
+--     graphUniforms nID units =
+--       let outWires = concatMap unitOutputs units
+--       in  concatMap (unitUniforms nID outWires) units
+
+--     unitUniforms :: NodeID -> [WireID] -> Unit -> String
+--     unitUniforms nID outWires unit =
+--       let inWires = unitInputs unit
+--           inputs = getShaderInputs $ unitName unit
+--           uniformInputs = map (\(i, glslType, _w) -> (i, glslType))
+--                         $ filter (\(_i, _type, w) -> notElem w outWires)
+--                             (zip3 [0::Int ..] inputs inWires)
+--       in  flip concatMap uniformInputs $ \(i, glslType) ->
+--             "uniform "+|glslType|+" in_Graph_"+|nID|+"_Unit_"+|unitID unit|+"_"+|i|+";\n"
+
+
+-- glslFunctions :: IntMap Node -> String
+-- glslFunctions nodes = (concatMap getShaderFn).nub $ functionNames nodes []
+--   where
+--     functionNames :: IntMap Node -> [String] -> [String]
+--     functionNames nodes' funs = IntMap.foldr nodeFuncs funs nodes'
+
+--     nodeFuncs :: Node -> [String] -> [String]
+--     nodeFuncs node funs =
+--       case node of Node  units   -> foldr (\u fs -> (unitName u) : fs) funs units
+--                    Group nodes'' -> functionNames nodes'' funs
+
+
+-- glslMain :: IntMap Node -> String
+-- glslMain nodes = IntMap.foldlWithKey' nodeCode "" nodes
+--   where
+--     nodeCode :: String -> NodeID -> Node -> String
+--     nodeCode glslString nID node =
+--       case node of Node  graph  -> glslString ++ (graphCode nID graph)
+--                    Group nodes' -> glslString ++ (glslMain nodes')
+
+--     graphCode :: NodeID -> Graph -> String
+--     graphCode nID units =
+--       let outWires = concatMap unitOutputs units
+--       in  concatMap (unitCode nID outWires) units
+
+--     unitCode :: NodeID -> [WireID] -> Unit -> String
+--     unitCode nID outWires unit =
+--       -- Note: this assumes each UGen has at least one output, including the
+--       --       GLOut UGen.
+--       foldl' (\func str -> str ++ func) ""
+--              $ map (functionCall nID unit outWires) (unitOutputs unit)
+
+--     functionCall :: NodeID -> Unit -> [WireID] -> WireID -> String
+--     functionCall nID unit outWires wireID =
+--       let name = unitName unit
+--           isGLOut = name == "GLOut"
+--           assignment = case name of
+--             "GLOut" -> "    FragColor = " :: String
+--             _       -> "    "+|fnType name|+" Graph_"+|nID|+"_Wire_"+|wireID|+" = "
+--       in  concat [ assignment
+--                  , unitName unit
+--                  , if isGLOut then "(FragColor, " else "("
+--                  , inputList (zip [0..] $ unitInputs unit)
+--                  , ");\n"
+--                  ]
+--       where
+--         inputList :: [(Int, WireID)] -> String
+--         inputList inWires =
+--           case inWires of
+--             [] -> ""
+--             (i, w):[] -> if elem w outWires
+--                            then "Graph_"+|nID|+"_Wire_"+|w|+""
+--                            else "in_Graph_"+|nID|+"_Unit_"+|unitID unit|+"_"+|i|+""
+--             hd:tl -> ""+|inputList [hd]|+", "+|inputList tl|+""
 
 
 {- Utility functions -}

@@ -1,13 +1,5 @@
-module Window ( WindowID
-              , Window(..)
-              ) where
+module Window () where
 
-import Data.ByteString (ByteString)
-import Data.IntMap (IntMap)
-import Node
+-- import Types
 
-type WindowID = Int
-data Window = Window { wNodes  :: IntMap Node
-                     , wID     :: WindowID
-                     , wShader :: ByteString
-                     }
+

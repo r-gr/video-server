@@ -18,11 +18,10 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Signal
 import System.ZMQ4 hiding (message)
 
-import Graph
 import Msg
 import Render
 import Shader (shaderName, ugenShaderFns)
-import Window (WindowID)
+import Types
 
 
 children :: MVar [MVar ()]
@@ -109,18 +108,18 @@ main = withContext $ \ctx -> do
          running in parallel is not to be implemented unless as an extension
          goal of the project.
       -}
-      GLWindowNew wID wWidth wHeight -> do
+      GLWindowNew winID wWidth wHeight -> do
         messageQueues' <- readIORef messageQueues
         -- If the map isn't empty (a window exists) then do nothing. Only a
         -- single output window is currently supported.
         if not $ IntMap.null messageQueues' then return () else do
           msgQ <- newTQueueIO
-          writeIORef messageQueues $ IntMap.insert wID msgQ messageQueues'
+          writeIORef messageQueues $ IntMap.insert winID msgQ messageQueues'
 
           _threadID <- forkChildOS $ withSocket ctx Sub $ \s -> do
             subscribe s $ C.pack ""
             connect s "ipc://@sc-video_data-msgs"
-            newWindow s msgQ msgQIn wID wWidth wHeight
+            newWindow s msgQ msgQIn winID wWidth wHeight
 
           return ()
 
@@ -128,9 +127,9 @@ main = withContext $ \ctx -> do
       {- GLWindowFree: close the GLFW window with the specified window ID,
          clean up and free any associated resources.
       -}
-      wFreeMsg@(GLWindowFree wID) -> do
-        forwardMsg messageQueues wID wFreeMsg
-        modifyIORef' messageQueues $ \mq -> IntMap.delete wID mq
+      wFreeMsg@(GLWindowFree winID) -> do
+        forwardMsg messageQueues winID wFreeMsg
+        modifyIORef' messageQueues $ \mq -> IntMap.delete winID mq
 
 
      {- GraphNew: compile the GLSL fragment shader from the graph structure,
@@ -139,8 +138,8 @@ main = withContext $ \ctx -> do
       graphNewMsg@(GraphNew _gID gUnits) -> do
         if not (containsVideoUGen glUGenNames gUnits) then return () else do
           msgQs <- readIORef messageQueues
-          forM_ (IntMap.keys msgQs) $ \wID ->
-            forwardMsg messageQueues wID graphNewMsg
+          forM_ (IntMap.keys msgQs) $ \winID ->
+            forwardMsg messageQueues winID graphNewMsg
 
 
       {- GraphFree: close the window associated with the specified graph ID,
@@ -148,47 +147,47 @@ main = withContext $ \ctx -> do
       -}
       GraphFree gphID -> do
         msgQs <- readIORef messageQueues
-        forM_ (IntMap.keys msgQs) $ \wID ->
-          forwardMsg messageQueues wID (GraphFree gphID)
+        forM_ (IntMap.keys msgQs) $ \winID ->
+          forwardMsg messageQueues winID (GraphFree gphID)
 
 
       {- GLVideoNew: prepare a video for playback in the window specified by the
          window ID. This just forwards the message to the window by putting the
          message on the window's queue.
       -}
-      vNewMsg@(GLVideoNew _vID _vPath _vLoop _vRate wID) -> do
-        forwardMsg messageQueues wID vNewMsg
+      vNewMsg@(GLVideoNew _vID _vPath _vLoop _vRate winID) -> do
+        forwardMsg messageQueues winID vNewMsg
 
 
       {- GLVideoNew: load a video into memory in the window specified by the
          window ID and prepare it for playback. This just forwards the message
          to the window by putting the message on the window's queue.
       -}
-      vReadMsg@(GLVideoRead _vID _vPath _vLoop _vRate wID) ->
-        forwardMsg messageQueues wID vReadMsg
+      vReadMsg@(GLVideoRead _vID _vPath _vLoop _vRate winID) ->
+        forwardMsg messageQueues winID vReadMsg
 
 
       {- GLVideoFree: free up the resources associated with the video in the
          window specified by the window ID. This will stop video playback but
          doesn't clear the video texture(?) or modify the shader program.
       -}
-      vFreeMsg@(GLVideoFree _vID wID) -> do
-        forwardMsg messageQueues wID vFreeMsg
+      vFreeMsg@(GLVideoFree _vID winID) -> do
+        forwardMsg messageQueues winID vFreeMsg
 
 
       {- GLImageNew: load an image from the supplied file path in the window
          specified by the window ID. This just forwards the message to the
          window by putting the message on the window's queue.
       -}
-      iNewMsg@(GLImageNew _vID _vPath wID) -> do
-        forwardMsg messageQueues wID iNewMsg
+      iNewMsg@(GLImageNew _vID _vPath winID) -> do
+        forwardMsg messageQueues winID iNewMsg
 
 
       {- GLImageFree: delete the image of specified ID in that window. Do
          nothing if an image with that ID doesn't exist.
       -}
-      iFreeMsg@(GLImageFree _vID wID) -> do
-        forwardMsg messageQueues wID iFreeMsg
+      iFreeMsg@(GLImageFree _vID winID) -> do
+        forwardMsg messageQueues winID iFreeMsg
 
 
       {- InternalWindowFree: a message which can only be passed internally from
@@ -196,8 +195,8 @@ main = withContext $ \ctx -> do
          case where the output window is closed via the window manager and that
          window's message queue needs to be deleted from the server.
       -}
-      InternalWindowFree wID -> do
-        modifyIORef' messageQueues $ \mq -> IntMap.delete wID mq
+      InternalWindowFree winID -> do
+        modifyIORef' messageQueues $ \mq -> IntMap.delete winID mq
 
 
       {- InternalServerQuit: perform graceful exit, close and free resorces.
@@ -209,8 +208,8 @@ main = withContext $ \ctx -> do
         -- for them to finish doing so and exit.
         flip finally waitForChildren $ do
           msgQs <- readIORef messageQueues
-          forM_ (IntMap.keys msgQs) $ \wID ->
-            forwardMsg messageQueues wID (GLWindowFree wID)
+          forM_ (IntMap.keys msgQs) $ \winID ->
+            forwardMsg messageQueues winID (GLWindowFree winID)
 
         shutdown ctx -- explicitly close ZeroMQ context
         exitSuccess
@@ -219,14 +218,14 @@ main = withContext $ \ctx -> do
 
 
 forwardMsg :: IORef (IntMap.IntMap (TQueue Msg)) -> WindowID -> Msg -> IO ()
-forwardMsg msgQsRef wID message = do
+forwardMsg msgQsRef winID message = do
   messageQueues <- readIORef msgQsRef
-  case IntMap.lookup wID messageQueues of
+  case IntMap.lookup winID messageQueues of
     Just msgQ -> atomically $ writeTQueue msgQ message
     Nothing ->
       putStrLn $ concat [ "*** Error: can't pass message to window "
-                        , show wID
+                        , show winID
                         , " because window "
-                        , show wID
+                        , show winID
                         , " doesn't exist."
                         ]

@@ -21,16 +21,15 @@ import System.ZMQ4 (Socket, Sub)
 
 import GLUtils
 import Msg
-import Node
 import Shader
 import Texture
-import Unit
-import Window (WindowID)
+import Transform
+import Types
 
 
 newWindow :: Socket Sub -> TQueue Msg -> TQueue Msg -> WindowID -> Int -> Int -> IO ()
-newWindow sock msgQIn msgQOut wID width height =
-  withWindow width height ("window " ++ show wID) $ \window -> do
+newWindow sock msgQIn msgQOut winID width height =
+  withWindow width height ("window " ++ show winID) $ \window -> do
     initShaderProgram <- compileShaderProgram vertexShader defaultFragShader
     screenShader <- compileShaderProgram screenVertShader screenFragShader
 
@@ -49,7 +48,7 @@ newWindow sock msgQIn msgQOut wID width height =
     shouldExit    <- newIORef False
     nodeTree      <- newIORef IntMap.empty :: IO (IORef (IntMap Node))
     iter1Ref      <- newIORef True
-    threadID      <- forkIO $ forever $ receiveDataMsg sock wID uniformVals textures textureQueue
+    threadID      <- forkIO $ forever $ receiveDataMsg sock winID uniformVals textures textureQueue
 
     -- create framebuffers to allow feedback textures
     (fb, texColBuf)   <- setupFramebuffer width height
@@ -60,12 +59,12 @@ newWindow sock msgQIn msgQOut wID width height =
     whileM_ (fmap not $ readIORef shouldExit) $ do
       wsc <- GLFW.windowShouldClose window
       nodeTree' <- readIORef nodeTree
-      let ugens         = concatMap (\(Node (_, us)) -> us) $ IntMap.elems nodeTree'
+      let ugens         = concatMap (\(Node us) -> us) $ IntMap.elems nodeTree'
           prevFrameUGen = 0 == (length $ filter (\u -> unitName u == "GLPrevFrame" || unitName u == "GLPrevFrame2") $ ugens)
 
       if wsc then do
-        closeWindow wID textures shouldExit
-        atomically $ writeTQueue msgQOut $ InternalWindowFree wID
+        closeWindow winID textures shouldExit
+        atomically $ writeTQueue msgQOut $ InternalWindowFree winID
       else if prevFrameUGen then do
 
         processInput window monitor videoMode isFullscreen
@@ -94,7 +93,7 @@ newWindow sock msgQIn msgQOut wID width height =
             screenShader textures shaderProg uniformVals textureQueue vao window
           writeIORef iter1Ref True
 
-    putStrLn $ "*** Info: Window "+|wID|+" - Killing sub socket thread"
+    putStrLn $ "*** Info: Window "+|winID|+" - Killing sub socket thread"
     killThread threadID
 
 
@@ -117,7 +116,7 @@ renderNoFB textures shaderProg uniformVals textureQueue vao window = do
   GL.currentProgram $= Just shaderProgram
   uniforms <- atomically $ flushTBQueue uniformVals
   forM_ uniforms $ \u -> do
-    let gID   = fromIntegral (uDataGraphID u) :: Int
+    let gID   = fromIntegral (uDataNodeID u)  :: Int
         uID   = fromIntegral (uDataUnitID u)  :: Int
         input = fromIntegral (uDataInput u)   :: Int
         name = uniformName gID uID input
@@ -165,7 +164,7 @@ renderFB fb tb1 tb2 ss textures shaderProg uniformVals textureQueue vao window =
   GL.currentProgram $= Just shaderProgram
   uniforms <- atomically $ flushTBQueue uniformVals
   forM_ uniforms $ \u -> do
-    let gID   = fromIntegral (uDataGraphID u) :: Int
+    let gID   = fromIntegral (uDataNodeID u)  :: Int
         uID   = fromIntegral (uDataUnitID u)  :: Int
         input = fromIntegral (uDataInput u)   :: Int
         name = uniformName gID uID input
@@ -203,9 +202,9 @@ renderFB fb tb1 tb2 ss textures shaderProg uniformVals textureQueue vao window =
 
 
 closeWindow :: WindowID -> TVar [Texture] -> IORef Bool -> IO ()
-closeWindow wID textures shouldExit = do
+closeWindow winID textures shouldExit = do
   textures' <- readTVarIO textures
-  forM_ textures' $ freeTexture wID
+  forM_ textures' $ freeTexture winID
   atomically $ modifyTVar' textures (\_ -> [])
   modifyIORef' shouldExit (\_-> True)
 
@@ -222,20 +221,20 @@ processCommands textures shouldExit shaderProg nodeTree msgQIn = do
     then return ()
     else do
       msg <- atomically $ readTQueue msgQIn
-      -- putStrLn $ "*** Debug: Window "+|wID|+" - received message: "+|(show msg)|+""
+      -- putStrLn $ "*** Debug: Window "+|winID|+" - received message: "+|(show msg)|+""
       handleMsg msg
   where
     handleMsg msg = case msg of
-      GLWindowFree wID -> closeWindow wID textures shouldExit
+      GLWindowFree winID -> closeWindow winID textures shouldExit
 
-      GLVideoNew vidID vPath vPlaybackRate vShouldLoop wID -> do
+      GLVideoNew vidID vPath vPlaybackRate vShouldLoop winID -> do
         textures' <- readTVarIO textures
 
         -- delete any existing videos with this ID
         let matchingTextures = filterVideoTextures (\t -> texID t == vidID) textures'
         if length matchingTextures > 0 then do
           atomically $ modifyTVar' textures $ dropVideoTexture vidID
-          forM_ matchingTextures $ freeTexture wID
+          forM_ matchingTextures $ freeTexture winID
         else
           return ()
 
@@ -245,14 +244,14 @@ processCommands textures shouldExit shaderProg nodeTree msgQIn = do
           Right texture -> atomically $ modifyTVar' textures $ \ts -> texture : ts
 
 
-      GLVideoRead vidID vPath vPlaybackRate vShouldLoop wID -> do
+      GLVideoRead vidID vPath vPlaybackRate vShouldLoop winID -> do
         textures' <- readTVarIO textures
 
         -- delete any existing videos with this ID
         let matchingTextures = filterVideoTextures (\t -> texID t == vidID) textures'
         if length matchingTextures > 0 then do
           atomically $ modifyTVar' textures $ dropVideoTexture vidID
-          forM_ matchingTextures $ freeTexture wID
+          forM_ matchingTextures $ freeTexture winID
         else
           return ()
 
@@ -264,18 +263,18 @@ processCommands textures shouldExit shaderProg nodeTree msgQIn = do
             atomically $ modifyTVar' textures $ \ts -> texture : ts
 
 
-      GLVideoFree vidID wID -> do
+      GLVideoFree vidID winID -> do
         textures' <- readTVarIO textures
         let matchingTextures = filterVideoTextures (\t -> texID t == vidID) textures'
 
         if length matchingTextures > 0 then do
           atomically $ modifyTVar' textures $ dropVideoTexture vidID
-          forM_ matchingTextures $ freeTexture wID
+          forM_ matchingTextures $ freeTexture winID
         else
           return ()
 
 
-      GLImageNew imgID iPath _wID -> do
+      GLImageNew imgID iPath _winID -> do
         textures' <- readTVarIO textures
 
         let matchingTextures = filterImageTextures (\t -> iID t == imgID) textures'
@@ -290,7 +289,7 @@ processCommands textures shouldExit shaderProg nodeTree msgQIn = do
           Right texture -> atomically $ modifyTVar' textures $ \ts -> texture : ts
 
 
-      GLImageFree imgID _wID -> do
+      GLImageFree imgID _winID -> do
         textures' <- readTVarIO textures
         let matchingTextures = filterImageTextures (\t -> iID t == imgID) textures'
 
@@ -306,7 +305,7 @@ processCommands textures shouldExit shaderProg nodeTree msgQIn = do
       GraphNew gID gUnits -> do
         let glUGenNames = map shaderName ugenShaderFns
             glUnits = filter (\u -> elem (unitName u) glUGenNames) gUnits
-        modifyIORef nodeTree $ \nt -> IntMap.insert gID (Node (gID, glUnits)) nt
+        modifyIORef nodeTree $ \nt -> IntMap.insert gID (Node glUnits) nt
         nodeTree' <- readIORef nodeTree
         let fs = pack $ generateGLSLCode nodeTree'
 
