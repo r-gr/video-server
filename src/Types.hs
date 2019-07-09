@@ -10,10 +10,14 @@ module Types ( Bus(..)
              , Node(..)
              , OutBus
              , Output(..)
+             , SCGraph
+             , SCUnit(..)
              , ShaderProgram(..)
              , SubGraph(..)
              -- , Synth(..)
              -- , SynthID
+             , UInput(..)
+             , UOutput(..)
              , Unit(..)
              , UnitID
              , Window(..)
@@ -21,35 +25,49 @@ module Types ( Bus(..)
              , WireID
              , containsVideoUGen
              , requiresPartition
+             , scUnitToUnit
+             , scUnitsToUnits
+             -- , scUnitToOut
+             -- , scUnitToIn
              ) where
 
 
 import Data.ByteString (ByteString)
 import Data.IntMap (IntMap)
-import Data.Aeson (FromJSON)
+import Data.Aeson
 import GHC.Generics
 import qualified Graphics.Rendering.OpenGL as GL
 
 
 type Graph = [Unit]
+type SCGraph = [SCUnit]
 
 type NodeID = Int
-data Node = Node Graph | Group (IntMap Node)
+-- TODO: temporarily storing the graph to let the check for GLPrevFrame
+--       in the Render module to stay in place
+data Node = Node [ShaderProgram] SCGraph | Group (IntMap Node)
 
 type WireID  = Int
 type UnitID  = Int
-data Unit    = Unit { unitName    :: String
-                    , unitID      :: UnitID
-                    , nodeID      :: NodeID
-                    , unitInputs  :: [WireID]
-                    , unitOutputs :: [WireID]
-                    } deriving (Generic, Show)
+data SCUnit = SCUnit { scUnitName    :: String
+                     , scUnitID      :: UnitID
+                     , scNodeID      :: NodeID
+                     , scUnitInputs  :: [WireID]
+                     , scUnitOutputs :: [WireID]
+                     } deriving (Generic, Show)
 
-instance FromJSON Unit
+instance FromJSON SCUnit
 
--- data UGen = Alpha
---           | Mix
---           | Rotate
+data UInput  = UIBus Input  | UIWire WireID
+data UOutput = UOBus Output | UOWire WireID
+data Unit = Unit { unitName    :: String
+                 , unitID      :: UnitID
+                 , nodeID      :: NodeID
+                 , unitInputs  :: [WireID]
+                 , unitOutputs :: [WireID]
+                 , unitBusIns  :: Maybe [Input]
+                 , unitBusOut  :: Maybe Output
+                 }
 
 type WindowID = Int
 data Window = Window { wNodes  :: IntMap Node
@@ -73,9 +91,51 @@ type OutBus = Bus
 data Bus = Bus GL.FramebufferObject GL.TextureObject
 
 
-containsVideoUGen :: [String] -> [Unit] -> Bool
+containsVideoUGen :: [String] -> [SCUnit] -> Bool
 containsVideoUGen glUGenNames units =
-  elem True $ map (\unit -> elem (unitName unit) glUGenNames) units
+  elem True $ map (\unit -> elem (scUnitName unit) glUGenNames) units
 
-requiresPartition :: Unit -> Bool
-requiresPartition unit = elem (unitName unit) ["Rotate"]
+
+requiresPartition :: SCUnit -> Bool
+requiresPartition unit = elem (scUnitName unit) ["Rotate"]
+
+
+scUnitsToUnits :: [SCUnit] -> [Input] -> Output -> [Unit]
+scUnitsToUnits [] _ _ = []
+scUnitsToUnits scUnits [] (OutGlobal _) = map scUnitToUnit scUnits
+scUnitsToUnits (x:xs) ins (OutGlobal _) = (toInUnit ins x) : (map scUnitToUnit xs)
+scUnitsToUnits scUnits [] out =
+  (map scUnitToUnit $ init scUnits) ++ [toOutUnit out $ last scUnits]
+scUnitsToUnits (x:xs) ins out =
+  (toInUnit ins x) : (map scUnitToUnit $ init xs) ++ [toOutUnit out $ last xs]
+
+scUnitToUnit :: SCUnit -> Unit
+scUnitToUnit u = Unit { unitName    = scUnitName u
+                      , unitID      = scUnitID u
+                      , nodeID      = scNodeID u
+                      , unitInputs  = scUnitInputs u
+                      , unitOutputs = scUnitOutputs u
+                      , unitBusIns  = Nothing
+                      , unitBusOut  = Nothing
+                      }
+
+toOutUnit :: Output -> SCUnit -> Unit
+toOutUnit out u = Unit { unitName    = scUnitName u
+                       , unitID      = scUnitID u
+                       , nodeID      = scNodeID u
+                       , unitInputs  = scUnitInputs u
+                       , unitOutputs = scUnitOutputs u
+                       , unitBusIns  = Nothing
+                       , unitBusOut  = Just out
+                       }
+
+toInUnit :: [Input] -> SCUnit -> Unit
+toInUnit ins u = Unit { unitName    = scUnitName u
+                      , unitID      = scUnitID u
+                      , nodeID      = scNodeID u
+                      , unitInputs  = scUnitInputs u
+                      , unitOutputs = scUnitOutputs u
+                      , unitBusIns  = Just ins
+                      , unitBusOut  = Nothing
+                      }
+

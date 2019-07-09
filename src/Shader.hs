@@ -111,7 +111,7 @@ parseFnSig glslFn =
 generateFragShader :: SubGraph -> FragShader
 generateFragShader (SubGraph units inputs output) =
   let fsCode = concat [ fsHeader
-                      , fsUniforms units
+                      , fsUniforms inputs units
                       , fsFunctions units
                       , "void main() {\n"
                       , "    FragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
@@ -127,9 +127,14 @@ generateFragShader (SubGraph units inputs output) =
                       ]
 
 
-fsUniforms :: Graph -> String
-fsUniforms graph = graphUniforms graph
+fsUniforms :: [Input] -> Graph -> String
+fsUniforms inputs graph = (inputBusUniforms inputs) ++ (graphUniforms graph)
   where
+    inputBusUniforms :: [Input] -> String
+    inputBusUniforms ins = flip concatMap ins $ \i ->
+      case i of InGlobal n -> "uniform sampler2D in_Bus_Global_"+|n|+";\n"
+                InLocal  n -> "uniform sampler2D in_Bus_Local_"+|n|+";\n"
+
     graphUniforms :: Graph -> String
     graphUniforms units =
       let outWires = concatMap unitOutputs units
@@ -138,11 +143,11 @@ fsUniforms graph = graphUniforms graph
     unitUniforms :: [WireID] -> Unit -> String
     unitUniforms outWires unit =
       let inWires = unitInputs unit
-          inputs = getShaderInputs $ unitName unit
-          uniformInputs = map (\(i, glslType, _w) -> (i, glslType))
-                        $ filter (\(_i, _type, w) -> notElem w outWires)
-                            (zip3 [0::Int ..] inputs inWires)
-      in  flip concatMap uniformInputs $ \(i, glslType) ->
+          args = getShaderInputs $ unitName unit
+          signalInputs = map (\(i, glslType, _w) -> (i, glslType))
+                       $ filter (\(_i, _type, w) -> notElem w outWires)
+                       $ zip3 [0::Int ..] args inWires
+      in  flip concatMap signalInputs $ \(i, glslType) ->
             "uniform "+|glslType|+" in_Graph_"+|nodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+";\n"
 
 
@@ -169,6 +174,9 @@ fsMain graph = graphCode graph
     functionCall unit outWires wireID =
       let name = unitName unit
           isGLOut = name == "GLOut"
+          -- !!!!!
+          -- TODO: output to FragColor when isJust unitBusOut.
+          --       should be a direct assignment to FragColor, not same as GLOut
           assignment = case name of
             "GLOut" -> "    FragColor = " :: String
             _       -> "    "+|fnType name|+" Graph_"+|nodeID unit|+"_Wire_"+|wireID|+" = "
@@ -179,6 +187,9 @@ fsMain graph = graphCode graph
                  , ");\n"
                  ]
       where
+        -- !!!!!
+        -- TODO: use uniform input bus when isJust unitBusIns.
+        --       need to work this out on paper...
         inputList :: [(Int, WireID)] -> String
         inputList inWires =
           case inWires of

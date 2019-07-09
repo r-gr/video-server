@@ -13,6 +13,7 @@ module GLUtils
     -- , setupTexture
     -- , deleteTexture
     , setFloatUniform
+    , setFloatUniform'
     , updateTextures
     , freeTexture
     ) where
@@ -228,6 +229,15 @@ setFloatUniform :: GL.Program -> String -> Float -> IO ()
 setFloatUniform shaderProgram uName floatValue = do
   uniformLoc <- GL.get $ GL.uniformLocation shaderProgram uName
   GL.uniform uniformLoc $= floatValue
+
+
+setFloatUniform' :: GL.Program -> String -> Float -> IO ()
+setFloatUniform' shaderProgram uName floatValue = do
+  uniformLoc <- GL.get $ GL.uniformLocation shaderProgram uName
+  if uniformLoc >= (GL.UniformLocation 0) then do
+    GL.uniform uniformLoc $= floatValue
+  else do
+    putStrLn $ "*** DEBUG: uniform "+|uName|+" is not in this shader program ("+||shaderProgram||+")"
 
 
 

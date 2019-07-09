@@ -23,12 +23,13 @@ import GHC.Generics
 import System.ZMQ4 (Socket, Sub, receive)
 
 import Texture
+-- import Transform
 import Types
 
 
 data Msg
   = GraphNew  { nodeID :: NodeID
-              , units  :: [Unit]
+              , units  :: [SCUnit]
               }
   | GraphFree { nodeID :: NodeID }
   | GLWindowNew  { windowID     :: WindowID

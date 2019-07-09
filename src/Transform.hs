@@ -1,9 +1,10 @@
-module Transform (compile, WindowState(..)) where
+module Transform (WindowState(..), partition, recurseNodeTree, compile) where
 
 
 import Control.Monad.Extra
 import Data.ByteString.Char8 (pack)
 import Data.IntMap (IntMap)
+-- import Data.IORef (IORef)
 import qualified Data.IntMap.Strict as IntMap
 import Data.List.Split (splitWhen)
 -- import qualified Graphics.Rendering.OpenGL as GL
@@ -17,27 +18,30 @@ import Types
 data WindowState =
   WindowState { width  :: Int
               , height :: Int
+              -- , shaderPrograms :: IORef [ShaderProgram]
               -- , defaultFBO :: GL.FramebufferObject
               , defaultOutBus :: Bus
               }
 
 
-generateShaderPrograms :: WindowState -> IntMap Node -> IO [ShaderProgram]
-generateShaderPrograms ws nodeTree = concatMapM (compile ws) (recurseNodeTree nodeTree)
+-- generateShaderPrograms :: WindowState -> IntMap Node -> IO [ShaderProgram]
+-- generateShaderPrograms ws nodeTree = mapM (compile ws) (recurseNodeTree nodeTree)
 
-recurseNodeTree :: IntMap Node -> [Graph]
-recurseNodeTree nodeTree = IntMap.foldl collectSynths [] nodeTree
+recurseNodeTree :: IntMap Node -> [(NodeID, ShaderProgram)]
+recurseNodeTree nodeTree = IntMap.foldrWithKey recurseNodes [] nodeTree
   where
-    collectSynths :: [Graph] -> Node -> [Graph]
-    collectSynths graphs node =
-      case node of Node  graph -> graphs ++ [graph]
-                   Group nodes -> graphs ++ (recurseNodeTree nodes)
+    recurseNodes :: NodeID -> Node -> [(NodeID, ShaderProgram)] -> [(NodeID, ShaderProgram)]
+    recurseNodes nID node shaderProgs =
+      case node of Node  sps _ -> recurseShaderProgs nID sps shaderProgs
+                   Group nodes -> (recurseNodeTree nodes) ++ shaderProgs
 
-compile :: WindowState -> Graph -> IO [ShaderProgram]
-compile ws graph =
-  let subGraphs   = partition graph
-      fragShaders = map generateFragShader subGraphs
-  in  mapM compileFragShader fragShaders
+    recurseShaderProgs _   []     shaderProgs = shaderProgs
+    recurseShaderProgs nID (x:xs) shaderProgs = (nID, x) : recurseShaderProgs nID xs shaderProgs
+
+compile :: WindowState -> SubGraph -> IO ShaderProgram
+compile ws subGraph =
+  let fragShader = generateFragShader subGraph
+  in  compileFragShader fragShader
   where
     compileFragShader (FragShader fragShader inputs _output) = do
       shaderProg <- compileShaderProgram vertexShader (pack fragShader)
@@ -46,13 +50,18 @@ compile ws graph =
         return $ Bus fb tObj
       return $ ShaderProgram shaderProg inBuses (defaultOutBus ws)
 
-partition :: Graph -> [SubGraph]
+partition :: SCGraph -> [SubGraph]
 partition graph =
   let splitGraph = splitWhen requiresPartition graph -- [[Unit]]
-  -- TODO: insert a GLOut where the graph gets split
   in  toSubGraphs splitGraph 0 []
 
-toSubGraphs :: [[Unit]] -> Int -> [Input] -> [SubGraph]
+-- TODO: does this work with the UGen graph in the notebook?
+--       can the graph be treated as a linear array while achieving the correct behaviour?
+toSubGraphs :: [[SCUnit]] -> Int -> [Input] -> [SubGraph]
 toSubGraphs []     _ _      = []
-toSubGraphs [x]    _ inputs = [SubGraph x inputs (OutGlobal 0)]
-toSubGraphs (x:xs) i inputs = (SubGraph x inputs (OutLocal  i)) : toSubGraphs xs (i+1) [InLocal i]
+toSubGraphs [x]    _ inputs = let out = OutGlobal 0
+                                  units = scUnitsToUnits x inputs out
+                              in  [SubGraph units inputs out]
+toSubGraphs (x:xs) i inputs = let out = OutLocal i
+                                  units = scUnitsToUnits x inputs out
+                              in  (SubGraph units inputs out) : toSubGraphs xs (i+1) [InLocal i]
