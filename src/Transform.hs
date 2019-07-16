@@ -4,6 +4,7 @@ module Transform (WindowState(..), partition, recurseNodeTree, compile) where
 import Control.Monad.Extra
 import Data.ByteString.Char8 (pack)
 import Data.IntMap (IntMap)
+import qualified Data.IntMap as IntMap
 -- import Data.IORef (IORef)
 import qualified Data.IntMap.Strict as IntMap
 import Data.List.Split (splitWhen)
@@ -52,7 +53,7 @@ compile ws subGraph =
 
 partition :: SCGraph -> [SubGraph]
 partition graph =
-  let splitGraph = splitWhen requiresPartition graph -- [[Unit]]
+  let splitGraph = splitWhen requiresPartition graph -- [[SCUnit]]
   in  toSubGraphs splitGraph 0 []
 
 -- TODO: does this work with the UGen graph in the notebook?

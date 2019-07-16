@@ -91,6 +91,37 @@ type OutBus = Bus
 data Bus = Bus GL.FramebufferObject GL.TextureObject
 
 
+data Link = Wire UnitID [UnitID]
+          | LBus UnitID [UnitID]
+
+toGraph :: [SCUnit] -> Graph
+toGraph units =
+  let unitOuts = IntMap.fromList
+               $ map (\(outs, uID) -> (head outs, uID))
+               $ filter (\(outs, _) -> lengths outs > 0)
+               $ map (\u -> (scUnitOutputs u, scUnitID u)) units
+
+      f (uID, ins) intMap = foldr (\wireID intMap ->
+        let wire = IntMap.lookup wireID intMap   -- :: Maybe Wire
+            src  = IntMap.lookup wireID unitOuts -- :: Maybe UnitID
+        in
+          case wire of
+            Nothing -> -- no extisting wire in the map
+              case src of
+                Nothing    -> intMap
+                Just srcID -> IntMap.insert wireID (Wire srcID [uID])
+            Just (Wire srcID dests) ->
+              IntMap.insert wireID (Wire srcID $ uID : dests)
+        ) intMap ins
+
+      wires = foldr f IntMap.empty
+            $ map (\u -> (scUnitID u, scUnitInputs u)) units
+
+
+
+
+
+
 containsVideoUGen :: [String] -> [SCUnit] -> Bool
 containsVideoUGen glUGenNames units =
   elem True $ map (\unit -> elem (scUnitName unit) glUGenNames) units
