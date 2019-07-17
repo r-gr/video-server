@@ -5,7 +5,7 @@ import Control.Monad.Loops
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.IORef
-import Data.List (nub)
+import Data.List (groupBy, nub)
 import Data.Maybe
 
 import Types
@@ -26,6 +26,9 @@ data NewUnit = NewUnit { nuName :: String
                        } deriving (Eq)
 data Link = Wire UnitID [UnitID]
           | LBus UnitID [UnitID]
+          deriving (Eq)
+
+data NewSubGraph = NewSubGraph NewGraph [Link] Link
 
 
 wiresMap :: [SCUnit] -> IntMap Link
@@ -64,7 +67,7 @@ toGraph units =
 
 -- Now have graph in a form where all links are Wires
 
-partition :: [SCUnit] -> IO [SubGraph]
+partition :: [SCUnit] -> IO [NewSubGraph]
 partition scUnits = do
   let units = toGraph scUnits
       unitsMap = IntMap.fromList $ map (\u -> (nuID u, u)) units
@@ -155,7 +158,13 @@ partition scUnits = do
   -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   -- TODO: split units into groups based on when the output is to a local bus
   -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  return []
+
+  -- assume lower ID units will _always_ output to higher ID units? I think that
+  -- makes it simpler but is it necessary?
+  -- could always throw in an extra check that the first units have no inputs from
+  -- other video UGens?
+  links' <- readIORef linksRef
+  return $ groupUnitsInSubGraphs unitsMap links'
   where
     -- TODO: I'm certain there's a better way to compose these IO results than
     --       needing to define a new function here.
@@ -175,3 +184,49 @@ traverseWires (Wire _ dests) units links texOuts =
             $ map (units IntMap.!) -- units
             $ dests
   in  foldr (\w -> traverseWires w units links) texOuts wires
+
+groupUnitsInSubGraphs :: IntMap NewUnit -> IntMap Link -> [NewSubGraph]
+groupUnitsInSubGraphs units links =
+  let unitList = IntMap.toAscList units
+      -- i. start at lowest index unit, determine where all paths lead (they should
+      --    converge on either an output with no further wires or a specific LBus?)
+      -- ii. do that for all units
+      unitPathDests = flip map unitList $ \(_, u) ->
+                        nuOutput u            -- :: WireID
+                        |> (links IntMap.!)   -- :: Link
+                        |> findDestination    -- :: NewUnit
+                        |> \dest -> (u, dest) -- :: (NewUnit, NewUnit)
+      -- iii. group units which end up at the same place
+      unitGroups = unitPathDests
+                   |> groupBy (\(_, dest1) (_, dest2) -> dest1 == dest2) -- :: [[(NewUnit, NewUnit)]]
+                   |> map (map (\(u, _) -> u)) -- [NewGraph] == [[NewUnit]]
+  in
+    -- TODO: get inputs to the group of units. That is, links which come from other units in
+    --       another SubGraph (or none)
+
+    -- if a unit has no inputs then it won't be the output destination of any unit
+
+    -- need to look at input wires of each unit in the SubGraph
+    --   if of the LBus type then add to SubGraph's inputs
+    --   if of the Wire type then ignore
+    unitGroups
+    |> map (\g -> NewSubGraph g (subGraphInputs g) (links IntMap.! (nuOutput $ findDestination $ links IntMap.! (nuOutput $ head g))))
+
+  where
+    findDestination :: Link -> NewUnit
+    findDestination (LBus src _)   = units IntMap.! src
+    findDestination (Wire src [])  = units IntMap.! src
+    findDestination (Wire _ (x:_)) = findDestination $ links IntMap.! (nuOutput $ units IntMap.! x)
+
+    subGraphInputs :: [NewUnit] -> [Link]
+    subGraphInputs graph =
+      graph
+      |> concatMap nuInputs
+      |> filter (\link -> case IntMap.lookup link links of
+                            Just (LBus _ _) -> True
+                            _ -> False)
+      |> map (links IntMap.!)
+      |> nub
+
+(|>) :: a -> (a -> b) -> b
+x |> f = f x
