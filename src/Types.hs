@@ -99,15 +99,17 @@ containsVideoUGen glUGenNames units =
 
 
 requiresPartition :: SCUnit -> Bool
-requiresPartition unit = elem (scUnitName unit) ["Rotate"]
+requiresPartition unit = elem (scUnitName unit) ["Rotate", "Tex1Thing", "Tex2Thing"]
 
 requiresPartition' :: String -> Bool
-requiresPartition' uName = elem uName ["Rotate"]
+requiresPartition' uName = elem uName ["Rotate", "Tex1Thing", "Tex2Thing"]
 
 partitionOn :: String -> Maybe [Int]
 partitionOn uName =
   case uName of
     "Rotate" -> Just [0]
+    "Tex1Thing" -> Just [0]
+    "Tex2Thing" -> Just [0, 1]
     _ -> Nothing
 
 
