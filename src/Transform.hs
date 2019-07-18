@@ -1,4 +1,4 @@
-module Transform (WindowState(..), partition, recurseNodeTree, compile) where
+module Transform (WindowState(..), recurseNodeTree, compile) where
 
 
 import Control.Monad.Extra
@@ -6,8 +6,8 @@ import Data.ByteString.Char8 (pack)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 -- import Data.IORef (IORef)
-import qualified Data.IntMap.Strict as IntMap
-import Data.List.Split (splitWhen)
+-- import qualified Data.IntMap.Strict as IntMap
+-- import Data.List.Split (splitWhen)
 -- import qualified Graphics.Rendering.OpenGL as GL
 
 import GLUtils
@@ -17,11 +17,11 @@ import Types
 
 -- move to Window. Window.State
 data WindowState =
-  WindowState { width  :: Int
-              , height :: Int
+  WindowState { wsWidth  :: Int
+              , wsHeight :: Int
               -- , shaderPrograms :: IORef [ShaderProgram]
               -- , defaultFBO :: GL.FramebufferObject
-              , defaultOutBus :: Bus
+              , wsDefaultOutBus :: Bus
               }
 
 
@@ -47,22 +47,22 @@ compile ws subGraph =
     compileFragShader (FragShader fragShader inputs _output) = do
       shaderProg <- compileShaderProgram vertexShader (pack fragShader)
       inBuses <- forM inputs $ \_ -> do
-        (fb, tObj) <- setupFramebuffer (width ws) (height ws)
+        (fb, tObj) <- setupFramebuffer (wsWidth ws) (wsHeight ws)
         return $ Bus fb tObj
-      return $ ShaderProgram shaderProg inBuses (defaultOutBus ws)
+      return $ ShaderProgram shaderProg inBuses (wsDefaultOutBus ws)
 
-partition :: SCGraph -> [SubGraph]
-partition graph =
-  let splitGraph = splitWhen requiresPartition graph -- [[SCUnit]]
-  in  toSubGraphs splitGraph 0 []
+-- partition :: SCGraph -> [SubGraph]
+-- partition graph =
+--   let splitGraph = splitWhen requiresPartition graph -- [[SCUnit]]
+--   in  toSubGraphs splitGraph 0 []
 
 -- TODO: does this work with the UGen graph in the notebook?
 --       can the graph be treated as a linear array while achieving the correct behaviour?
-toSubGraphs :: [[SCUnit]] -> Int -> [Input] -> [SubGraph]
-toSubGraphs []     _ _      = []
-toSubGraphs [x]    _ inputs = let out = OutGlobal 0
-                                  units = scUnitsToUnits x inputs out
-                              in  [SubGraph units inputs out]
-toSubGraphs (x:xs) i inputs = let out = OutLocal i
-                                  units = scUnitsToUnits x inputs out
-                              in  (SubGraph units inputs out) : toSubGraphs xs (i+1) [InLocal i]
+-- toSubGraphs :: [[SCUnit]] -> Int -> [Input] -> [SubGraph]
+-- toSubGraphs []     _ _      = []
+-- toSubGraphs [x]    _ inputs = let out = OutGlobal 0
+--                                   units = scUnitsToUnits x inputs out
+--                               in  [SubGraph units inputs out]
+-- toSubGraphs (x:xs) i inputs = let out = OutLocal i
+--                                   units = scUnitsToUnits x inputs out
+--                               in  (SubGraph units inputs out) : toSubGraphs xs (i+1) [InLocal i]

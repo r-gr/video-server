@@ -1,112 +1,97 @@
-module Graph (theThing) where
+module Graph (partition) where
 
 import Control.Monad
 import Control.Monad.Loops
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.IORef
-import Data.List (groupBy, nub)
+import Data.List (groupBy, nub, sortOn)
 import Data.Maybe
-
-import Text.Pretty.Simple (pPrint)
 
 import Types
 
 
--- tmp for ghcid
-theThing :: IO ()
-theThing =
-  let units = [ SCUnit { scUnitName    = "Video"
-                       , scUnitID      = 1
-                       , scNodeID      = 1000
-                       , scUnitInputs  = []
-                       , scUnitOutputs = [1]
-                       }
-              , SCUnit { scUnitName    = "Noise"
-                       , scUnitID      = 2
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [999, 998]
-                       , scUnitOutputs = [2]
-                       }
-              , SCUnit { scUnitName    = "RGB"
-                       , scUnitID      = 3
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [2, 997, 996, 995]
-                       , scUnitOutputs = [3]
-                       }
-              , SCUnit { scUnitName    = "Alpha"
-                       , scUnitID      = 4
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [2, 994]
-                       , scUnitOutputs = [4]
-                       }
-              , SCUnit { scUnitName    = "Tex1Thing"
-                       , scUnitID      = 5
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [2, 4]
-                       , scUnitOutputs = [6]
-                       }
-              , SCUnit { scUnitName    = "Mix"
-                       , scUnitID      = 6
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [1, 3, 993]
-                       , scUnitOutputs = [5]
-                       }
-              , SCUnit { scUnitName    = "Red"
-                       , scUnitID      = 7
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [6, 992]
-                       , scUnitOutputs = [9]
-                       }
-              , SCUnit { scUnitName    = "Blend"
-                       , scUnitID      = 8
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [5, 3, 991, 990]
-                       , scUnitOutputs = [7]
-                       }
-              , SCUnit { scUnitName    = "Tex2Thing"
-                       , scUnitID      = 9
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [5, 7]
-                       , scUnitOutputs = [8]
-                       }
-              , SCUnit { scUnitName    = "Mix"
-                       , scUnitID      = 10
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [7, 8, 989]
-                       , scUnitOutputs = [10]
-                       }
-              , SCUnit { scUnitName    = "Mix"
-                       , scUnitID      = 11
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [9, 10, 988]
-                       , scUnitOutputs = [11]
-                       }
-              , SCUnit { scUnitName    = "Out"
-                       , scUnitID      = 12
-                       , scNodeID      = 1000
-                       , scUnitInputs  = [11]
-                       , scUnitOutputs = [12]
-                       }
-              ]
-  in do
-    subGraphs <- partition units
-    putStrLn $ show subGraphs
+-- theThing :: IO ()
+-- theThing =
+--   let units = [ SCUnit { scUnitName    = "Video"
+--                        , scUnitID      = 1
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = []
+--                        , scUnitOutputs = [1]
+--                        }
+--               , SCUnit { scUnitName    = "Noise"
+--                        , scUnitID      = 2
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [999, 998]
+--                        , scUnitOutputs = [2]
+--                        }
+--               , SCUnit { scUnitName    = "RGB"
+--                        , scUnitID      = 3
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [2, 997, 996, 995]
+--                        , scUnitOutputs = [3]
+--                        }
+--               , SCUnit { scUnitName    = "Alpha"
+--                        , scUnitID      = 4
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [2, 994]
+--                        , scUnitOutputs = [4]
+--                        }
+--               , SCUnit { scUnitName    = "Tex1Thing"
+--                        , scUnitID      = 5
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [2, 4]
+--                        , scUnitOutputs = [6]
+--                        }
+--               , SCUnit { scUnitName    = "Mix"
+--                        , scUnitID      = 6
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [1, 3, 993]
+--                        , scUnitOutputs = [5]
+--                        }
+--               , SCUnit { scUnitName    = "Red"
+--                        , scUnitID      = 7
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [6, 992]
+--                        , scUnitOutputs = [9]
+--                        }
+--               , SCUnit { scUnitName    = "Blend"
+--                        , scUnitID      = 8
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [5, 3, 991, 990]
+--                        , scUnitOutputs = [7]
+--                        }
+--               , SCUnit { scUnitName    = "Tex2Thing"
+--                        , scUnitID      = 9
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [5, 7]
+--                        , scUnitOutputs = [8]
+--                        }
+--               , SCUnit { scUnitName    = "Mix"
+--                        , scUnitID      = 10
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [7, 8, 989]
+--                        , scUnitOutputs = [10]
+--                        }
+--               , SCUnit { scUnitName    = "Mix"
+--                        , scUnitID      = 11
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [9, 10, 988]
+--                        , scUnitOutputs = [11]
+--                        }
+--               , SCUnit { scUnitName    = "Out"
+--                        , scUnitID      = 12
+--                        , scNodeID      = 1000
+--                        , scUnitInputs  = [11]
+--                        , scUnitOutputs = [12]
+--                        }
+--               ]
+--   in do
+--     subGraphs <- partition units
+--     pPrint subGraphs
 
 
-type NewGraph = [NewUnit]
-data NewUnit = NewUnit { nuName :: String
-                       , nuID :: UnitID
-                       , nuNodeID :: NodeID
-                       , nuInputs :: [WireID]
-                       , nuOutput :: WireID
-                       , nuPartition :: Bool
-                       } deriving (Eq, Show)
-data Link = Wire UnitID [UnitID]
-          | LBus UnitID [UnitID]
-          deriving (Eq, Show)
 
-data NewSubGraph = NewSubGraph NewGraph [Link] Link deriving (Show)
 
 
 wiresMap :: [SCUnit] -> IntMap Link
@@ -168,11 +153,9 @@ partition scUnits = do
       let wiresToChange = foldr (\index wires -> ((nuInputs u) !! index) : wires)
                                 [] (fromJust $ partitionOn (nuName u))
 
-      putStrLn $ "*** Debug: wiresToChange = " ++ (show wiresToChange)
-
       forM_ wiresToChange $ \w -> do
         links <- readIORef linksRef
-        putStrLn "*** Debug: L168 in forM_ wiresToChange"
+        -- putStrLn "*** Debug: L168 in forM_ wiresToChange"
         let link = links IntMap.! w
             newLink = case link of
                         Wire from to -> LBus from to
@@ -206,8 +189,8 @@ partition scUnits = do
   whileM_ (fmap ((> 0).length) $ readIORef activeListRef) $ do
     activeList' <- readIORef activeListRef
     -- putStrLn "*** Debug: L201 in whileM_ (fmap ((> 0).length) $ readIORef activeListRef)"
-    putStrLn $ "\n\n*** Debug: L202 activeList' = "
-    pPrint activeList'
+    -- putStrLn $ "\n\n*** Debug: L202 activeList' = "
+    -- pPrint activeList'
     let multiOutUnits = flip filter activeList' $ \u ->
           case IntMap.lookup (nuOutput u) links of
             Just (Wire _ dests) -> length dests > 1
@@ -216,7 +199,7 @@ partition scUnits = do
 
     modifyIORef activeListRef $ filter (\u -> elem u multiOutUnits)
 
-    putStrLn $ "*** Debug: length multiOutUnits = " ++ (show len)
+    -- putStrLn $ "*** Debug: length multiOutUnits = " ++ (show len)
 
     index <- newIORef 0
     shouldContinue <- newIORef (len > 0)
@@ -224,7 +207,7 @@ partition scUnits = do
     whileM_ (keepGoing shouldContinue index len) $ do
       links' <- readIORef linksRef
       index' <- readIORef index
-      putStrLn "\n\n*** Debug: L214 in whileM_ (keepGoing shouldContinue index len)"
+      -- putStrLn "\n\n*** Debug: L214 in whileM_ (keepGoing shouldContinue index len)"
       let u = multiOutUnits !! index'
           outWireID = nuOutput u
           outWire = links' IntMap.! outWireID
@@ -240,26 +223,12 @@ partition scUnits = do
             newLinks = IntMap.insert outWireID (LBus src dests) links'
         in do
           writeIORef linksRef newLinks
-          putStrLn $ "\n*** Debug: nuID u = " ++ (show $ nuID u)
-          activeList' <- readIORef activeListRef
-          putStrLn $ "\n*** Debug: activeList' = " ++ (show activeList')
           modifyIORef activeListRef $ filter (/= u)
           writeIORef shouldContinue False
       else
         return ()
 
-  -- now have wires of the correct types.
-
-  -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  -- TODO: split units into groups based on when the output is to a local bus
-  -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  -- assume lower ID units will _always_ output to higher ID units? I think that
-  -- makes it simpler but is it necessary?
-  -- could always throw in an extra check that the first units have no inputs from
-  -- other video UGens?
-  links' <- readIORef linksRef
-  return $ groupUnitsInSubGraphs unitsMap links'
+  readIORef linksRef >>= return.(groupUnitsInSubGraphs unitsMap)
   where
     -- TODO: I'm certain there's a better way to compose these IO results than
     --       needing to define a new function here.
@@ -267,7 +236,6 @@ partition scUnits = do
       continue <- readIORef continueRef
       ind <- readIORef indexRef
       return (continue && ind < len)
-
 
 
 traverseWires :: Link -> IntMap NewUnit -> IntMap Link -> [UnitID] -> [UnitID]
@@ -280,6 +248,9 @@ traverseWires (Wire _ dests) units links texOuts =
             $ dests
   in  foldr (\w -> traverseWires w units links) texOuts wires
 
+
+{- Split units into groups based on when the output is to a local bus.
+-}
 groupUnitsInSubGraphs :: IntMap NewUnit -> IntMap Link -> [NewSubGraph]
 groupUnitsInSubGraphs units links =
   let unitList = IntMap.toAscList units
@@ -289,13 +260,14 @@ groupUnitsInSubGraphs units links =
       unitPathDests = flip map unitList $ \(_, u) ->
                         nuOutput u                             -- :: WireID
                         |> (\wire -> IntMap.lookup wire links) -- :: Link
-                        |> findDestination                     -- :: NewUnit
-                        |> \dest -> (u, dest)                  -- :: (NewUnit, Maybe NewUnit)
+                        |> findDestination u                   -- :: NewUnit
+                        |> \dest -> (u, dest)                  -- :: (NewUnit, NewUnit)
       -- iii. group units which end up at the same place
       unitGroups = unitPathDests
+                   |> sortOn (nuID.snd)
                    |> groupBy (\(_, dest1) (_, dest2) -> dest1 == dest2) -- :: [[(NewUnit, NewUnit)]]
-                   |> map (map (\(u, _) -> u)) -- [NewGraph] == [[NewUnit]]
-  in
+                   -- |> map (map (\(u, _) -> u)) -- [NewGraph] == [[NewUnit]]
+  in do
     -- TODO: get inputs to the group of units. That is, links which come from other units in
     --       another SubGraph (or none)
 
@@ -305,24 +277,34 @@ groupUnitsInSubGraphs units links =
     --   if of the LBus type then add to SubGraph's inputs
     --   if of the Wire type then ignore
     unitGroups
-    |> map (\g -> NewSubGraph g (subGraphInputs g) (links IntMap.! (nuOutput $ findDestination $ links IntMap.! (nuOutput $ head g))))
+    |> map (\g -> NewSubGraph (map fst g) (subGraphInputs g) (subGraphOutput g))
+
 
   where
-    findDestination :: Maybe Link -> Maybe NewUnit
-    findDestination (Just (LBus src _))   = Just $ units IntMap.! src
-    findDestination (Just (Wire src []))  = Just $ units IntMap.! src
-    findDestination (Just (Wire _ (x:_))) = findDestination $ links IntMap.! (nuOutput $ units IntMap.! x)
-    findDestination Nothing = Nothing
+    findDestination :: NewUnit -> Maybe Link -> NewUnit
+    findDestination _ (Just (LBus src _))   = units IntMap.! src
+    findDestination _ (Just (Wire src []))  = units IntMap.! src
+    -- findDestination _ (Just (Wire src [x])) = IntMap.lookup (nuOutput $ units IntMap.! x) links
+    findDestination _ (Just (Wire _ (x:_))) = findDestination (units IntMap.! x) $ IntMap.lookup (nuOutput $ units IntMap.! x) links
+    findDestination u Nothing = u
 
-    subGraphInputs :: [NewUnit] -> [Link]
+    subGraphInputs :: [(NewUnit, NewUnit)] -> [Link]
     subGraphInputs graph =
       graph
-      |> concatMap nuInputs
+      |> concatMap (nuInputs.fst)
       |> filter (\link -> case IntMap.lookup link links of
                             Just (LBus _ _) -> True
                             _ -> False)
       |> map (links IntMap.!)
       |> nub
+
+    subGraphOutput :: [(NewUnit, NewUnit)] -> Maybe Link
+    subGraphOutput graph =
+      graph
+      |> head
+      |> snd
+      |> nuOutput
+      |> flip IntMap.lookup links
 
 (|>) :: a -> (a -> b) -> b
 x |> f = f x

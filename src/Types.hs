@@ -31,6 +31,10 @@ module Types ( Bus(..)
              , scUnitsToUnits
              -- , scUnitToOut
              -- , scUnitToIn
+             , NewGraph
+             , NewUnit(..)
+             , Link(..)
+             , NewSubGraph(..)
              ) where
 
 
@@ -91,6 +95,20 @@ type InBus  = Bus
 type OutBus = Bus
 
 data Bus = Bus GL.FramebufferObject GL.TextureObject
+
+type NewGraph = [NewUnit]
+data NewUnit = NewUnit { nuName :: String
+                       , nuID :: UnitID
+                       , nuNodeID :: NodeID
+                       , nuInputs :: [WireID]
+                       , nuOutput :: WireID
+                       , nuPartition :: Bool
+                       } deriving (Eq, Show)
+data Link = Wire UnitID [UnitID]
+          | LBus UnitID [UnitID]
+          deriving (Eq, Show)
+
+data NewSubGraph = NewSubGraph NewGraph [Link] (Maybe Link) deriving (Show)
 
 
 containsVideoUGen :: [String] -> [SCUnit] -> Bool

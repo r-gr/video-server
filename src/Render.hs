@@ -20,6 +20,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import System.ZMQ4 (Socket, Sub)
 
 import GLUtils
+import Graph
 import Msg
 import Shader
 import Texture
@@ -56,10 +57,10 @@ newWindow sock msgQIn msgQOut winID width height =
     let bus0 = Bus fb0 t0
 
     -- TODO: clearly, the state should change when the window is resized etc.
-    let state = WindowState { width = width
-                            , height = height
+    let state = WindowState { wsWidth = width
+                            , wsHeight = height
                             -- , shaderPrograms = shaderProgs
-                            , defaultOutBus = bus0
+                            , wsDefaultOutBus = bus0
                             }
 
     -- create framebuffers to allow feedback textures
