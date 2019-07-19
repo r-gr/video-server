@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, BangPatterns #-}
 
 module Main (main) where
 
@@ -85,10 +85,10 @@ main = withContext $ \ctx -> do
 
         Just m -> atomically $ writeTQueue msgQIn m
 
-  -- use $! to force shader files to be read from disk at this point if that is
-  -- the result of ugenShaderFns, otherwise there may be an undesirable pause
-  -- when the first GraphNew is received.
-  let glUGenNames = map shaderName $! ugenShaderFns
+  -- use the BangPatterns language extensions to force shader files to be read
+  -- from disk at this point if that is the result of ugenShaderFns, otherwise
+  -- there may be an undesirable pause when the first GraphNew is received.
+  let !glUGenNames = map shaderName ugenShaderFns
 
   installHandler sigABRT $ interruptHandler msgQIn
   installHandler sigINT  $ interruptHandler msgQIn
