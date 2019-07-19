@@ -8,92 +8,125 @@ import Data.IORef
 import Data.List (groupBy, nub, sortOn)
 import Data.Maybe
 
+import Shader
 import Types
 
 
--- theThing :: IO ()
--- theThing =
---   let units = [ SCUnit { scUnitName    = "Video"
---                        , scUnitID      = 1
---                        , scNodeID      = 1000
---                        , scUnitInputs  = []
---                        , scUnitOutputs = [1]
---                        }
---               , SCUnit { scUnitName    = "Noise"
---                        , scUnitID      = 2
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [999, 998]
---                        , scUnitOutputs = [2]
---                        }
---               , SCUnit { scUnitName    = "RGB"
---                        , scUnitID      = 3
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [2, 997, 996, 995]
---                        , scUnitOutputs = [3]
---                        }
---               , SCUnit { scUnitName    = "Alpha"
---                        , scUnitID      = 4
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [2, 994]
---                        , scUnitOutputs = [4]
---                        }
---               , SCUnit { scUnitName    = "Tex1Thing"
---                        , scUnitID      = 5
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [2, 4]
---                        , scUnitOutputs = [6]
---                        }
---               , SCUnit { scUnitName    = "Mix"
---                        , scUnitID      = 6
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [1, 3, 993]
---                        , scUnitOutputs = [5]
---                        }
---               , SCUnit { scUnitName    = "Red"
---                        , scUnitID      = 7
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [6, 992]
---                        , scUnitOutputs = [9]
---                        }
---               , SCUnit { scUnitName    = "Blend"
---                        , scUnitID      = 8
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [5, 3, 991, 990]
---                        , scUnitOutputs = [7]
---                        }
---               , SCUnit { scUnitName    = "Tex2Thing"
---                        , scUnitID      = 9
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [5, 7]
---                        , scUnitOutputs = [8]
---                        }
---               , SCUnit { scUnitName    = "Mix"
---                        , scUnitID      = 10
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [7, 8, 989]
---                        , scUnitOutputs = [10]
---                        }
---               , SCUnit { scUnitName    = "Mix"
---                        , scUnitID      = 11
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [9, 10, 988]
---                        , scUnitOutputs = [11]
---                        }
---               , SCUnit { scUnitName    = "Out"
---                        , scUnitID      = 12
---                        , scNodeID      = 1000
---                        , scUnitInputs  = [11]
---                        , scUnitOutputs = [12]
---                        }
---               ]
---   in do
---     subGraphs <- partition units
---     pPrint subGraphs
+import Text.Pretty.Simple (pPrint)
+
+theThing :: IO ()
+theThing =
+  -- let units = [ SCUnit { scUnitName    = "GLPlayVid"
+  --                      , scUnitID      = 1
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [1000]
+  --                      , scUnitOutputs = [1]
+  --                      }
+  --             , SCUnit { scUnitName    = "Noise"
+  --                      , scUnitID      = 2
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [999, 998]
+  --                      , scUnitOutputs = [2]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLRGB"
+  --                      , scUnitID      = 3
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [2, 997, 996, 995]
+  --                      , scUnitOutputs = [3]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLAlpha"
+  --                      , scUnitID      = 4
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [2, 994]
+  --                      , scUnitOutputs = [4]
+  --                      }
+  --             , SCUnit { scUnitName    = "Tex1Thing"
+  --                      , scUnitID      = 5
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [2, 4]
+  --                      , scUnitOutputs = [6]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLMix"
+  --                      , scUnitID      = 6
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [1, 3, 993]
+  --                      , scUnitOutputs = [5]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLRed"
+  --                      , scUnitID      = 7
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [6, 992]
+  --                      , scUnitOutputs = [9]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLBlend"
+  --                      , scUnitID      = 8
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [5, 3, 991, 990]
+  --                      , scUnitOutputs = [7]
+  --                      }
+  --             , SCUnit { scUnitName    = "Tex2Thing"
+  --                      , scUnitID      = 9
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [5, 7]
+  --                      , scUnitOutputs = [8]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLMix"
+  --                      , scUnitID      = 10
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [7, 8, 989]
+  --                      , scUnitOutputs = [10]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLMix"
+  --                      , scUnitID      = 11
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [9, 10, 988]
+  --                      , scUnitOutputs = [11]
+  --                      }
+  --             , SCUnit { scUnitName    = "GLOut"
+  --                      , scUnitID      = 12
+  --                      , scNodeID      = 1000
+  --                      , scUnitInputs  = [11]
+  --                      , scUnitOutputs = [12]
+  --                      }
+  --             ]
+  let units = [ SCUnit
+                  { scUnitName = "GLPlayVid"
+                  , scUnitID = 2
+                  , scNodeID = 1029
+                  , scUnitInputs = [ 1 ]
+                  , scUnitOutputs = [ 5 ]
+                  }
+              , SCUnit
+                  { scUnitName = "Rotate"
+                  , scUnitID = 3
+                  , scNodeID = 1029
+                  , scUnitInputs =
+                      [ 5
+                      , 4
+                      ]
+                  , scUnitOutputs = [ 6 ]
+                  }
+              , SCUnit
+                  { scUnitName = "GLOut"
+                  , scUnitID = 4
+                  , scNodeID = 1029
+                  , scUnitInputs = [ 6 ]
+                  , scUnitOutputs = [ 7 ]
+                  }
+              ]
+  in do
+    subGraphs <- partition units
+    pPrint subGraphs
+    putStrLn "\n\n\n\n"
+    forM_ subGraphs $ \sg -> putStrLn "\n" >> pPrint (generateFragShader sg) >> putStrLn "\n"
 
 
 
 
-
+{- Construct a mapping from wire IDs to the links they form between UGens. At
+   this point, each link is represented as a Wire but further analysis of the
+   graph may require that some wires become a local bus (LBus) instead.
+-}
 wiresMap :: [SCUnit] -> IntMap Link
 wiresMap units =
   let unitOuts = IntMap.fromList
@@ -110,30 +143,44 @@ wiresMap units =
               Nothing -> -- no extisting wire in the map
                 case src of
                   Nothing    -> intMap'
-                  Just srcID -> IntMap.insert wireID (Wire srcID [uID]) intMap'
-              Just (Wire srcID dests) -> IntMap.insert wireID (Wire srcID $ uID : dests) intMap'
-              Just (LBus srcID dests) -> IntMap.insert wireID (Wire srcID $ uID : dests) intMap'
+                  Just srcID -> IntMap.insert wireID (Wire wireID srcID [uID]) intMap'
+              Just (Wire _ srcID dests) -> IntMap.insert wireID (Wire wireID srcID $ uID : dests) intMap'
+              Just (LBus _ srcID dests) -> IntMap.insert wireID (Wire wireID srcID $ uID : dests) intMap'
         ) intMap ins
   in  foldr f IntMap.empty $ map (\u -> (scUnitID u, scUnitInputs u)) units
 
 
-toGraph :: [SCUnit] -> NewGraph
+toGraph :: [SCUnit] -> Graph
 toGraph units =
   flip map units $ \(SCUnit name uID nID ins outs) ->
-    NewUnit { nuName = name
-            , nuID = uID
-            , nuNodeID = nID
-            , nuInputs = ins
-            , nuOutput = (head outs)
-            , nuPartition = isJust $ partitionOn name
-            }
+    Unit { unitName = name
+         , unitID = uID
+         , nodeID = nID
+         , unitInputs = ins
+         , unitOutput = (head outs)
+         , unitPartitionOn = partitionOn name
+         }
 
--- Now have graph in a form where all links are Wires
 
-partition :: [SCUnit] -> IO [NewSubGraph]
+{- Partition a UGen graph based on where certain UGens require their input to
+   be a texture for geometrical transformations such as rotations.
+
+   TODO: convert this to a pure functional (non-IO) transformation. It was
+         initially implemented in this iterative style to match the algorithm as
+         worked out on paper.
+
+   TODO: also ensure the output list is correctly ordered so that the shader
+         programs for the SubGraphs can be executed in sequence. That is, for a
+         certain SubGraph, if it takes any texture inputs from other SubGraphs,
+         they must have been rendered first.
+-}
+partition :: [SCUnit] -> IO [SubGraph]
 partition scUnits = do
   let units = toGraph scUnits
-      unitsMap = IntMap.fromList $ map (\u -> (nuID u, u)) units
+      unitsMap = IntMap.fromList $ map (\u -> (unitID u, u)) units
+
+  -- putStrLn "*** Debug: graph partitioning - initial active list:"
+  -- pPrint units
 
   -- Define the 'active list': all nodes which still need to be checked in
   -- the partition algorithm.
@@ -146,20 +193,20 @@ partition scUnits = do
   --    - cut any inputs as needed, leaving some units which don't require
   --      texture input/output but need a cut regardless
   forM_ units $ \u -> do
-    if nuPartition u then do
+    if isJust $ unitPartitionOn u then do
       -- remove any units which require partition from the active list
       modifyIORef activeListRef $ filter (/= u)
 
-      let wiresToChange = foldr (\index wires -> ((nuInputs u) !! index) : wires)
-                                [] (fromJust $ partitionOn (nuName u))
+      let wiresToChange = foldr (\index wires -> ((unitInputs u) !! index) : wires)
+                                [] (fromJust $ partitionOn (unitName u))
 
       forM_ wiresToChange $ \w -> do
         links <- readIORef linksRef
         -- putStrLn "*** Debug: L168 in forM_ wiresToChange"
         let link = links IntMap.! w
             newLink = case link of
-                        Wire from to -> LBus from to
-                        LBus _ _     -> link
+                        Wire wireID from to -> LBus wireID from to
+                        LBus _      _    _  -> link
 
         writeIORef linksRef $ IntMap.insert w newLink links
 
@@ -167,17 +214,26 @@ partition scUnits = do
     else
       return ()
 
+  -- putStrLn "*** Debug: finished graph partition step 1."
+  -- putStrLn "*** Debug: graph partitioning - active list after step 1."
+  -- al <- readIORef activeListRef
+  -- pPrint al
+
 
   -- 1.5 Drop units which output a texture from the 'active list'
   links <- readIORef linksRef
   activeList <- readIORef activeListRef
   let texOuts = map (\(wire, _) -> wire)
               $ IntMap.toList
-              $ IntMap.filter (\l -> case l of LBus _ _ -> True; Wire _ _ -> False)
+              $ IntMap.filter (\l -> case l of LBus _ _ _ -> True; Wire _ _ _ -> False)
               $ links
 
-  writeIORef activeListRef $ filter (\u -> not $ elem (nuOutput u) texOuts) activeList
+  writeIORef activeListRef $ filter (\u -> not $ elem (unitOutput u) texOuts) activeList
 
+  -- putStrLn "*** Debug: finished graph partition step 1.5"
+  -- putStrLn "*** Debug: graph partitioning - active list after step 1.5"
+  -- al' <- readIORef activeListRef
+  -- pPrint al'
 
   -- 2. For each unit with multiple output paths, ennumerate all paths which lead to
   --    unique texture outputs (the cut links/wires).
@@ -188,18 +244,15 @@ partition scUnits = do
   --      else continue
   whileM_ (fmap ((> 0).length) $ readIORef activeListRef) $ do
     activeList' <- readIORef activeListRef
-    -- putStrLn "*** Debug: L201 in whileM_ (fmap ((> 0).length) $ readIORef activeListRef)"
-    -- putStrLn $ "\n\n*** Debug: L202 activeList' = "
+    -- putStrLn $ "*** Debug: graph partitioning step 2. active list length = " ++ (show $ length activeList')
     -- pPrint activeList'
     let multiOutUnits = flip filter activeList' $ \u ->
-          case IntMap.lookup (nuOutput u) links of
-            Just (Wire _ dests) -> length dests > 1
+          case IntMap.lookup (unitOutput u) links of
+            Just (Wire _ _ dests) -> length dests > 1
             _ -> False
         len = length multiOutUnits
 
     modifyIORef activeListRef $ filter (\u -> elem u multiOutUnits)
-
-    -- putStrLn $ "*** Debug: length multiOutUnits = " ++ (show len)
 
     index <- newIORef 0
     shouldContinue <- newIORef (len > 0)
@@ -207,26 +260,27 @@ partition scUnits = do
     whileM_ (keepGoing shouldContinue index len) $ do
       links' <- readIORef linksRef
       index' <- readIORef index
-      -- putStrLn "\n\n*** Debug: L214 in whileM_ (keepGoing shouldContinue index len)"
       let u = multiOutUnits !! index'
-          outWireID = nuOutput u
+          outWireID = unitOutput u
           outWire = links' IntMap.! outWireID
-          -- TODO: from this unit, recursively follow all output wires;
-          --         if a texture output (LBus) is reached, add its wire ID to the list
-          --         if path ends without reaching an LBus then leave list as-is
+          -- from this unit, recursively follow all output wires;
+          --   if a texture output (LBus) is reached, add its wire ID to the list
+          --   if path ends without reaching an LBus then leave list as-is
           --
-          --       ensure no duplicate wire IDs are in the resultant list
+          -- ensure no duplicate wire IDs are in the resultant list
           pathsToTextureOutputs = nub $ traverseWires outWire unitsMap links' []
 
       if length pathsToTextureOutputs > 1 then
-        let Wire src dests = links' IntMap.! outWireID
-            newLinks = IntMap.insert outWireID (LBus src dests) links'
+        let Wire _ src dests = links' IntMap.! outWireID
+            newLinks = IntMap.insert outWireID (LBus outWireID src dests) links'
         in do
           writeIORef linksRef newLinks
           modifyIORef activeListRef $ filter (/= u)
           writeIORef shouldContinue False
       else
         return ()
+
+  -- putStrLn "*** Debug: finished graph partition step 2."
 
   readIORef linksRef >>= return.(groupUnitsInSubGraphs unitsMap)
   where
@@ -238,12 +292,12 @@ partition scUnits = do
       return (continue && ind < len)
 
 
-traverseWires :: Link -> IntMap NewUnit -> IntMap Link -> [UnitID] -> [UnitID]
-traverseWires (LBus src _) _ _ texOuts = src:texOuts
-traverseWires (Wire _ [])  _ _ texOuts = texOuts
-traverseWires (Wire _ dests) units links texOuts =
+traverseWires :: Link -> IntMap Unit -> IntMap Link -> [UnitID] -> [UnitID]
+traverseWires (LBus _ src _) _ _ texOuts = src:texOuts
+traverseWires (Wire _ _ [])  _ _ texOuts = texOuts
+traverseWires (Wire _ _ dests) units links texOuts =
   let wires = map (links IntMap.!) -- Links
-            $ map (nuOutput)       -- wire IDs
+            $ map (unitOutput)       -- wire IDs
             $ map (units IntMap.!) -- units
             $ dests
   in  foldr (\w -> traverseWires w units links) texOuts wires
@@ -251,60 +305,50 @@ traverseWires (Wire _ dests) units links texOuts =
 
 {- Split units into groups based on when the output is to a local bus.
 -}
-groupUnitsInSubGraphs :: IntMap NewUnit -> IntMap Link -> [NewSubGraph]
+groupUnitsInSubGraphs :: IntMap Unit -> IntMap Link -> [SubGraph]
 groupUnitsInSubGraphs units links =
   let unitList = IntMap.toAscList units
       -- i. start at lowest index unit, determine where all paths lead (they should
       --    converge on either an output with no further wires or a specific LBus?)
       -- ii. do that for all units
       unitPathDests = flip map unitList $ \(_, u) ->
-                        nuOutput u                             -- :: WireID
+                        unitOutput u                             -- :: WireID
                         |> (\wire -> IntMap.lookup wire links) -- :: Link
-                        |> findDestination u                   -- :: NewUnit
-                        |> \dest -> (u, dest)                  -- :: (NewUnit, NewUnit)
+                        |> findDestination u                   -- :: Unit
+                        |> \dest -> (u, dest)                  -- :: (Unit, Unit)
       -- iii. group units which end up at the same place
       unitGroups = unitPathDests
-                   |> sortOn (nuID.snd)
-                   |> groupBy (\(_, dest1) (_, dest2) -> dest1 == dest2) -- :: [[(NewUnit, NewUnit)]]
-                   -- |> map (map (\(u, _) -> u)) -- [NewGraph] == [[NewUnit]]
+                   |> sortOn (unitID.snd)
+                   |> groupBy (\(_, dest1) (_, dest2) -> dest1 == dest2) -- :: [[(Unit, Unit)]]
   in do
-    -- TODO: get inputs to the group of units. That is, links which come from other units in
-    --       another SubGraph (or none)
-
-    -- if a unit has no inputs then it won't be the output destination of any unit
-
-    -- need to look at input wires of each unit in the SubGraph
-    --   if of the LBus type then add to SubGraph's inputs
-    --   if of the Wire type then ignore
+    -- convert these groups of units to their SubGraph representations
     unitGroups
-    |> map (\g -> NewSubGraph (map fst g) (subGraphInputs g) (subGraphOutput g))
-
-
+    |> map (\g -> SubGraph (map fst g) (subGraphInputs g) (subGraphOutput g))
   where
-    findDestination :: NewUnit -> Maybe Link -> NewUnit
-    findDestination _ (Just (LBus src _))   = units IntMap.! src
-    findDestination _ (Just (Wire src []))  = units IntMap.! src
-    -- findDestination _ (Just (Wire src [x])) = IntMap.lookup (nuOutput $ units IntMap.! x) links
-    findDestination _ (Just (Wire _ (x:_))) = findDestination (units IntMap.! x) $ IntMap.lookup (nuOutput $ units IntMap.! x) links
+    (|>) :: a -> (a -> b) -> b
+    x |> f = f x
+
+    findDestination :: Unit -> Maybe Link -> Unit
+    findDestination _ (Just (LBus _ src _))   = units IntMap.! src
+    findDestination _ (Just (Wire _ src []))  = units IntMap.! src
+    -- findDestination _ (Just (Wire src [x])) = IntMap.lookup (unitOutput $ units IntMap.! x) links
+    findDestination _ (Just (Wire _ _ (x:_))) = findDestination (units IntMap.! x) $ IntMap.lookup (unitOutput $ units IntMap.! x) links
     findDestination u Nothing = u
 
-    subGraphInputs :: [(NewUnit, NewUnit)] -> [Link]
+    subGraphInputs :: [(Unit, Unit)] -> [Link]
     subGraphInputs graph =
       graph
-      |> concatMap (nuInputs.fst)
+      |> concatMap (unitInputs.fst)
       |> filter (\link -> case IntMap.lookup link links of
-                            Just (LBus _ _) -> True
+                            Just (LBus _ _ _) -> True
                             _ -> False)
       |> map (links IntMap.!)
       |> nub
 
-    subGraphOutput :: [(NewUnit, NewUnit)] -> Maybe Link
+    subGraphOutput :: [(Unit, Unit)] -> Maybe Link
     subGraphOutput graph =
       graph
       |> head
       |> snd
-      |> nuOutput
+      |> unitOutput
       |> flip IntMap.lookup links
-
-(|>) :: a -> (a -> b) -> b
-x |> f = f x

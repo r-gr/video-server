@@ -1,10 +1,12 @@
 module Transform (WindowState(..), recurseNodeTree, compile) where
 
 
-import Control.Monad.Extra
+-- import Control.Monad.Extra
 import Data.ByteString.Char8 (pack)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import Data.Map (Map)
+import qualified Data.Map as Map
 -- import Data.IORef (IORef)
 -- import qualified Data.IntMap.Strict as IntMap
 -- import Data.List.Split (splitWhen)
@@ -21,8 +23,9 @@ data WindowState =
               , wsHeight :: Int
               -- , shaderPrograms :: IORef [ShaderProgram]
               -- , defaultFBO :: GL.FramebufferObject
-              , wsDefaultOutBus :: Bus
-              }
+              , wsBuses :: Map (NodeID, WireID) Bus
+              , wsDefaultOutBus :: OutBus
+              } deriving (Show)
 
 
 -- generateShaderPrograms :: WindowState -> IntMap Node -> IO [ShaderProgram]
@@ -39,17 +42,29 @@ recurseNodeTree nodeTree = IntMap.foldrWithKey recurseNodes [] nodeTree
     recurseShaderProgs _   []     shaderProgs = shaderProgs
     recurseShaderProgs nID (x:xs) shaderProgs = (nID, x) : recurseShaderProgs nID xs shaderProgs
 
-compile :: WindowState -> SubGraph -> IO ShaderProgram
-compile ws subGraph =
+compile :: WindowState -> SubGraph -> IO (WindowState, ShaderProgram)
+compile ws subGraph@(SubGraph units _ _) =
   let fragShader = generateFragShader subGraph
-  in  compileFragShader fragShader
+      sgNodeID   = (nodeID.head) units
+  in  compileFragShader sgNodeID fragShader
   where
-    compileFragShader (FragShader fragShader inputs _output) = do
+    compileFragShader nID (FragShader fragShader inputs output) = do
       shaderProg <- compileShaderProgram vertexShader (pack fragShader)
-      inBuses <- forM inputs $ \_ -> do
-        (fb, tObj) <- setupFramebuffer (wsWidth ws) (wsHeight ws)
-        return $ Bus fb tObj
-      return $ ShaderProgram shaderProg inBuses (wsDefaultOutBus ws)
+
+      let inBuses = flip map inputs $ \(LBus inWireID _ _) ->
+                      InBus inWireID $ wsBuses ws Map.! (nID, inWireID)
+
+      case output of
+        Just (LBus outWireID _ _) -> do
+          (fb, tObj) <- setupFramebuffer (wsWidth ws) (wsHeight ws)
+          let bus   = Bus fb tObj
+              buses = Map.insert (nID, outWireID) bus $ wsBuses ws
+
+          return $ ( ws { wsBuses = buses }
+                   , ShaderProgram shaderProg inBuses $ OutBus outWireID bus
+                   )
+        _ -> return $ (ws, ShaderProgram shaderProg inBuses (wsDefaultOutBus ws))
+
 
 -- partition :: SCGraph -> [SubGraph]
 -- partition graph =

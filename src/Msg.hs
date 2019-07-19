@@ -124,6 +124,8 @@ receiveDataMsg s _wID uniformVals textures textureQueue = do
           uIn   = fromIntegral uIn16   :: Int
           vidID = fromIntegral vidID32 :: Int
 
+      -- putStrLn "*** Debug: received AssignVideoMsg"
+
       textures' <- readTVarIO textures
       let assignmentExists = elem True $ flip map textures' $ \tex ->
             case tex of Vid texture ->
@@ -132,8 +134,10 @@ receiveDataMsg s _wID uniformVals textures textureQueue = do
                           texID texture == vidID && elem (gID, uID, uIn) (assignments texture)
                         _ -> False
 
-      if not assignmentExists then
+      if not assignmentExists then do
+        -- putStrLn "*** Debug: writing AssignVideoMsg to queue"
         atomically $ writeTBQueue textureQueue (AssignVideo (gID, uID, uIn) vidID)
+        -- putStrLn "*** Debug:     finished writing AssignVideoMsg to queue"
       else
         return ()
 
