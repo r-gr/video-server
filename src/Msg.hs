@@ -23,7 +23,6 @@ import GHC.Generics
 import System.ZMQ4 (Socket, Sub, receive)
 
 import Texture
--- import Transform
 import Types
 
 
@@ -124,8 +123,6 @@ receiveDataMsg s _wID uniformVals textures textureQueue = do
           uIn   = fromIntegral uIn16   :: Int
           vidID = fromIntegral vidID32 :: Int
 
-      -- putStrLn "*** Debug: received AssignVideoMsg"
-
       textures' <- readTVarIO textures
       let assignmentExists = elem True $ flip map textures' $ \tex ->
             case tex of Vid texture ->
@@ -135,9 +132,7 @@ receiveDataMsg s _wID uniformVals textures textureQueue = do
                         _ -> False
 
       if not assignmentExists then do
-        -- putStrLn "*** Debug: writing AssignVideoMsg to queue"
         atomically $ writeTBQueue textureQueue (AssignVideo (gID, uID, uIn) vidID)
-        -- putStrLn "*** Debug:     finished writing AssignVideoMsg to queue"
       else
         return ()
 

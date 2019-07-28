@@ -3,25 +3,19 @@
 
 module Shader ( Shader(..)
               , ugenShaderFns
-              -- , embeddedShaders
               , defaultFragShader
               , vertexShader
               , screenVertShader
               , screenFragShader
               , uniformName
               , generateFragShader
-              -- , generateGLSLCode
               ) where
 
 
--- import Control.Exception (catch)
 import Control.Monad (forM)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (pack, unpack)
 import Data.FileEmbed (embedDir, embedFile)
--- import Data.Foldable (foldl')
--- import Data.IntMap (IntMap)
--- import qualified Data.IntMap.Strict as IntMap
 import Data.List (nub)
 import Data.List.Split (splitOneOf)
 import Data.List.Utils (endswith)
@@ -47,7 +41,7 @@ ugenShaderFns = unsafePerformIO $ do
     then return embeddedShaders
     else return shaders
   where
-    -- loadUGensFromAppDir :: IO [Shader]
+    loadUGensFromAppDir :: IO [Shader]
     loadUGensFromAppDir = do
       appDir       <- getXdgDirectory XdgData "SuperCollider-AV/UGens"
       appDirExists <- doesDirectoryExist appDir
@@ -133,8 +127,6 @@ fsUniforms inputs graph = (inputBusUniforms inputs) ++ (graphUniforms graph)
   where
     inputBusUniforms :: [Link] -> String
     inputBusUniforms ins = flip concatMap ins $ \i ->
-      -- case i of InGlobal n -> "uniform sampler2D in_Bus_Global_"+|n|+";\n"
-      --           InLocal  n -> "uniform sampler2D in_Bus_Local_"+|n|+";\n"
       case i of LBus wireID _ _ -> "uniform sampler2D u_Bus_Local_"+|wireID|+";\n"
                 Wire _      _ _ -> ""
 
@@ -204,106 +196,6 @@ fsMain inputs output graph = graphCode graph
                         else
                           "in_Graph_"+|nodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+""
             hd:tl -> ""+|inputList uName [hd]|+", "+|inputList uName tl|+""
-
-
-{- Generate the GLSL code for the fragment shader from the node tree.
--}
--- generateGLSLCode :: IntMap Node -> String
--- generateGLSLCode nodes =
---   concat [ glslHeader
---          , glslUniforms nodes
---          , glslFunctions nodes
---          , "void main() {\n"
---          , "    FragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
---          , glslMain nodes
---          , "}\n"
---          ]
---   where
---     glslHeader = concat [ "#version 430 core\n\n"
---                         , "in  vec2 TexCoord;\n"
---                         , "out vec4 FragColor;\n\n"
---                         , "uniform sampler2D sc_PrevFrame;\n\n"
---                         ]
-
-
--- glslUniforms :: IntMap Node -> String
--- glslUniforms nodes = IntMap.foldlWithKey' nodeUniforms "" nodes
---   where
---     nodeUniforms :: String -> NodeID -> Node -> String
---     nodeUniforms glslString nID node =
---       case node of Node  graph  -> glslString ++ (graphUniforms nID graph)
---                    Group nodes' -> glslString ++ (glslUniforms nodes')
-
---     graphUniforms :: NodeID -> Graph -> String
---     graphUniforms nID units =
---       let outWires = concatMap unitOutputs units
---       in  concatMap (unitUniforms nID outWires) units
-
---     unitUniforms :: NodeID -> [WireID] -> Unit -> String
---     unitUniforms nID outWires unit =
---       let inWires = unitInputs unit
---           inputs = getShaderInputs $ unitName unit
---           uniformInputs = map (\(i, glslType, _w) -> (i, glslType))
---                         $ filter (\(_i, _type, w) -> notElem w outWires)
---                             (zip3 [0::Int ..] inputs inWires)
---       in  flip concatMap uniformInputs $ \(i, glslType) ->
---             "uniform "+|glslType|+" in_Graph_"+|nID|+"_Unit_"+|unitID unit|+"_"+|i|+";\n"
-
-
--- glslFunctions :: IntMap Node -> String
--- glslFunctions nodes = (concatMap getShaderFn).nub $ functionNames nodes []
---   where
---     functionNames :: IntMap Node -> [String] -> [String]
---     functionNames nodes' funs = IntMap.foldr nodeFuncs funs nodes'
-
---     nodeFuncs :: Node -> [String] -> [String]
---     nodeFuncs node funs =
---       case node of Node  units   -> foldr (\u fs -> (unitName u) : fs) funs units
---                    Group nodes'' -> functionNames nodes'' funs
-
-
--- glslMain :: IntMap Node -> String
--- glslMain nodes = IntMap.foldlWithKey' nodeCode "" nodes
---   where
---     nodeCode :: String -> NodeID -> Node -> String
---     nodeCode glslString nID node =
---       case node of Node  graph  -> glslString ++ (graphCode nID graph)
---                    Group nodes' -> glslString ++ (glslMain nodes')
-
---     graphCode :: NodeID -> Graph -> String
---     graphCode nID units =
---       let outWires = concatMap unitOutputs units
---       in  concatMap (unitCode nID outWires) units
-
---     unitCode :: NodeID -> [WireID] -> Unit -> String
---     unitCode nID outWires unit =
---       -- Note: this assumes each UGen has at least one output, including the
---       --       GLOut UGen.
---       foldl' (\func str -> str ++ func) ""
---              $ map (functionCall nID unit outWires) (unitOutputs unit)
-
---     functionCall :: NodeID -> Unit -> [WireID] -> WireID -> String
---     functionCall nID unit outWires wireID =
---       let name = unitName unit
---           isGLOut = name == "GLOut"
---           assignment = case name of
---             "GLOut" -> "    FragColor = " :: String
---             _       -> "    "+|fnType name|+" Graph_"+|nID|+"_Wire_"+|wireID|+" = "
---       in  concat [ assignment
---                  , unitName unit
---                  , if isGLOut then "(FragColor, " else "("
---                  , inputList (zip [0..] $ unitInputs unit)
---                  , ");\n"
---                  ]
---       where
---         inputList :: [(Int, WireID)] -> String
---         inputList inWires =
---           case inWires of
---             [] -> ""
---             (i, w):[] -> if elem w outWires
---                            then "Graph_"+|nID|+"_Wire_"+|w|+""
---                            else "in_Graph_"+|nID|+"_Unit_"+|unitID unit|+"_"+|i|+""
---             hd:tl -> ""+|inputList [hd]|+", "+|inputList tl|+""
 
 
 {- Utility functions -}

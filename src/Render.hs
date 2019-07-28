@@ -7,11 +7,9 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad (forever)
 import Control.Monad.Loops
--- import Data.ByteString.Char8 (pack, unpack)
 import Data.Foldable (forM_, foldlM)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
--- import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.IORef
 import Data.Maybe
@@ -48,8 +46,6 @@ newWindow sock msgQIn msgQOut winID width height =
     uniformVals   <- newTBQueueIO 1000 :: IO (TBQueue UnitData)
     textures      <- newTVarIO ([] :: [Texture])
     textureQueue  <- newTBQueueIO 1000 :: IO (TBQueue TextureUpdate)
-    -- shaderProg    <- newIORef initShaderProgram
-    -- shaderProgs   <- newIORef ([] :: [ShaderProgram])
     nodeTree      <- newIORef (IntMap.empty :: IntMap Node)
     shouldExit    <- newIORef False
     iter1Ref      <- newIORef True
@@ -57,15 +53,7 @@ newWindow sock msgQIn msgQOut winID width height =
 
     -- create a default output bus
     (defaultFbo, defaultTexOut) <- setupFramebuffer width height
-    -- (defaultFbo', defaultTexOut') <- setupFramebuffer width height
     let defaultBus = Bus defaultFbo defaultTexOut
-        -- defaultBus' = Bus defaultFbo' defaultTexOut'
-
-    -- nodeTree <- newIORef $ IntMap.singleton (-1)
-    --                      $ Node [ ShaderProgram initShaderProgram
-    --                                             []
-    --                                             (OutBus (-2) defaultBus')
-    --                             ] []
 
     -- TODO: clearly, the state should change when the window is resized etc.
     stateRef <- newIORef $ WindowState { wsWidth = width
@@ -79,8 +67,6 @@ newWindow sock msgQIn msgQOut winID width height =
     (fb', texColBuf') <- setupFramebuffer width height
     GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
 
-    -- putStrLn "*** Debug: done with the main GL setup, entering render loop"
-
     -- main render loop
     whileM_ (fmap not $ readIORef shouldExit) $ do
       wsc <- GLFW.windowShouldClose window
@@ -93,16 +79,13 @@ newWindow sock msgQIn msgQOut winID width height =
         atomically $ writeTQueue msgQOut $ InternalWindowFree winID
       else if prevFrameUGen then do
 
-        -- putStrLn "*** Debug:   processing input"
         processInput window monitor videoMode isFullscreen
 
         {- If there's a message on the queue, pop it off and perform it in
            some manner.
         -}
-        -- putStrLn "*** Debug:   processing server commands"
         processCommands textures shouldExit nodeTree msgQIn stateRef
 
-        -- putStrLn "*** Debug:   rendering without feedback"
         renderNoFB textures nodeTree stateRef uniformVals textureQueue screenShader vao window
 
       else do
@@ -127,7 +110,6 @@ newWindow sock msgQIn msgQOut winID width height =
 
 
 renderNoFB :: TVar [Texture]
-           -- -> IORef GL.Program
            -> IORef (IntMap Node)
            -> IORef WindowState
            -> TBQueue UnitData
@@ -137,11 +119,6 @@ renderNoFB :: TVar [Texture]
            -> GLFW.Window
            -> IO ()
 renderNoFB textures nodeTree stateRef uniformVals textureQueue ss vao window = do
-  -- -- render to the default framebuffer
-  -- GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
-  -- GL.clearColor $= GL.Color4 0.0 0.0 0.0 1.0
-  -- GL.clear [GL.ColorBuffer]
-
   {- Update texture and float uniforms.
   -}
   nodeTree' <- readIORef nodeTree
@@ -153,17 +130,13 @@ renderNoFB textures nodeTree stateRef uniformVals textureQueue ss vao window = d
   let uniformUpdates = IntMap.fromListWith (++)
                      $ map (\unitData -> (uDataNodeID unitData, [unitData])) uniforms
 
-  -- pPrint uniformUpdates
-
   forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inBuses (OutBus _wireID (Bus out _))) -> do
-    -- putStrLn "*** Debug: rendering stuff in the node tree"
     GL.currentProgram $= Just shaderProgram
     forM_ (fromMaybe [] $ IntMap.lookup nID uniformUpdates) $ \u -> do
       let gID   = fromIntegral (uDataNodeID u)  :: Int
           uID   = fromIntegral (uDataUnitID u)  :: Int
           input = fromIntegral (uDataInput u)   :: Int
           name = uniformName gID uID input
-      -- putStrLn $ "*** Debug: performing data msg. " ++ (show u)
 
       -- TODO: note - this attempts to set every uniform for the node in each
       --       shader program. may be quite wasteful if a node is split into many
@@ -178,7 +151,7 @@ renderNoFB textures nodeTree stateRef uniformVals textureQueue ss vao window = d
     textures'' <- updateTextures shaderProgram (length inBuses) textures'
     atomically $ modifyTVar' textures $ \_ -> textures''
 
-    -- TODO: bind input bus(es) to texture units
+    -- bind input bus(es) to texture units
     forM_ (zip [0..] inBuses) $ \(i, InBus wireID (Bus _ tObj)) ->
       bindInputBus shaderProgram i wireID tObj
 
@@ -206,7 +179,6 @@ renderNoFB textures nodeTree stateRef uniformVals textureQueue ss vao window = d
 
   GLFW.swapBuffers window
   GLFW.pollEvents
-  -- putStrLn "*** Debug: end of render loop"
 
 
 renderFB :: GL.FramebufferObject
@@ -214,7 +186,6 @@ renderFB :: GL.FramebufferObject
          -> GL.TextureObject
          -> GL.Program
          -> TVar [Texture]
-         -- -> IORef GL.Program
          -> IORef (IntMap Node)
          -> IORef WindowState
          -> TBQueue UnitData
@@ -223,11 +194,6 @@ renderFB :: GL.FramebufferObject
          -> GLFW.Window
          -> IO ()
 renderFB fb tb1 tb2 ss textures nodeTree stateRef uniformVals textureQueue vao window = do
-  -- -- render to the background framebuffer
-  -- GL.bindFramebuffer GL.Framebuffer $= fb
-  -- GL.clearColor $= GL.Color4 0.0 0.0 0.0 1.0
-  -- GL.clear [GL.ColorBuffer]
-
   {- Update texture and float uniforms.
   -}
   nodeTree' <- readIORef nodeTree
@@ -246,7 +212,6 @@ renderFB fb tb1 tb2 ss textures nodeTree stateRef uniformVals textureQueue vao w
           uID   = fromIntegral (uDataUnitID u)  :: Int
           input = fromIntegral (uDataInput u)   :: Int
           name = uniformName gID uID input
-      -- putStrLn $ "*** Debug: performing data msg. " ++ (show u)
 
       -- TODO: note - this attempts to set every uniform for the node in each
       --       shader program. may be quite wasteful if a node is split into many
@@ -322,7 +287,6 @@ closeWindow winID textures shouldExit = do
 
 processCommands :: TVar [Texture]
                 -> IORef Bool
-                -- -> IORef GL.Program
                 -> IORef (IntMap Node)
                 -> TQueue Msg
                 -> IORef WindowState
@@ -333,7 +297,6 @@ processCommands textures shouldExit nodeTree msgQIn stateRef = do
     then return ()
     else do
       msg <- atomically $ readTQueue msgQIn
-      -- putStrLn $ "*** Debug: Window received message: "+|(show msg)|+""
       handleMsg msg
   where
     handleMsg msg = case msg of
@@ -418,9 +381,6 @@ processCommands textures shouldExit nodeTree msgQIn stateRef = do
         let glUGenNames = map shaderName ugenShaderFns
             glUnits = filter (\u -> elem (scUnitName u) glUGenNames) gUnits
 
-        -- putStrLn "*** Debug: window has received GraphNew message"
-        -- pPrint glUnits
-
         -- convert SCGraph to SubGraphs
         subGraphs <- partition glUnits
         state <- readIORef stateRef
@@ -443,12 +403,6 @@ processCommands textures shouldExit nodeTree msgQIn stateRef = do
 
         {- TODO: if the node tree is empty, insert a 'blank' shader program.
         -}
-
-        -- nodeTree' <- readIORef nodeTree
-
-        -- shaderProgs <- generateShaderPrograms state nodeTree'
-
-        -- writeIORef (shaderPrograms state) shaderProgs
 
         currentTime <- GLFW.getTime
         atomically $ modifyTVar' textures $ map $ \tex ->
