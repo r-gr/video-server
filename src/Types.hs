@@ -28,6 +28,7 @@ module Types ( Bus(..)
 
 import Data.ByteString (ByteString)
 import Data.IntMap (IntMap)
+import Data.Map (Map)
 import Data.Aeson
 import GHC.Generics
 import qualified Graphics.Rendering.OpenGL as GL

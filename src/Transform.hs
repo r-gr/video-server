@@ -4,7 +4,6 @@ module Transform (recurseNodeTree, compile) where
 import Data.ByteString.Char8 (pack)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.Map (Map)
 import qualified Data.Map as Map
 
 import GLUtils
