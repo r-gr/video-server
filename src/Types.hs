@@ -104,6 +104,7 @@ partitionOn uName =
     "Ripple"    -> Just [0]
     "Rotate"    -> Just [0]
     "Scale"     -> Just [0]
+    "ScaleXY"   -> Just [0]
     "Translate" -> Just [0]
     -- "Tex2Thing" -> Just [0, 1]
     _ -> Nothing
