@@ -104,7 +104,7 @@ partitionOn uName =
     "MirrorY"   -> Just [0]
     "Ripple"    -> Just [0]
     "Rotate"    -> Just [0]
-    "Scale"     -> Just [0]
+    "Scale2"    -> Just [0]
     "ScaleXY"   -> Just [0]
     "Translate" -> Just [0]
     -- "Tex2Thing" -> Just [0, 1]

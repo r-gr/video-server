@@ -1,4 +1,4 @@
-vec4 Scale(sampler2D in_tex, float xy_scale)
+vec4 Scale2(sampler2D in_tex, float xy_scale)
 {
 	vec2 xy = TexCoord;
          xy = vec2(xy.x * xy_scale, xy.y * xy_scale);
