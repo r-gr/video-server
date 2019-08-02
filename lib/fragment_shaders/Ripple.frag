@@ -1,7 +1,9 @@
 vec4 Ripple(sampler2D in_tex, float time, float speed, float strength, float frequency) {
     // bring both speed and strength into the kinds of ranges we need for this effect
-    float speed = time * speed * 0.05;
-    float strength = strength / 100.0;
+    // float speed = time * speed * 0.05;
+    speed = time * speed;
+    // float strength = strength / 100.0;
+    strength = strength / 1000.0;
 
     // take a copy of the current texture coordinate so we can modify it
     vec2 coord = TexCoord;
