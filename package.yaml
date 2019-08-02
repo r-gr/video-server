@@ -37,6 +37,7 @@ dependencies:
 - ObjectName
 - OpenGL
 - OpenGLRaw
+- optparse-applicative
 # pretty-simple: pretty printing in development via Text.Pretty.Simple
 # (pPrint) for any types deriving/implementing Show.
 - pretty-simple
