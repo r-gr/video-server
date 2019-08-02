@@ -487,13 +487,17 @@ updateImage shaderProgram texUnitsUsed texture =
 
 updateVideos :: GL.Program -> Int -> [VideoTexture] -> IO [Maybe Texture]
 updateVideos shaderProgram texUnitsUsed textures = do
-  updated <- flip forkMapM textures $ \texture ->
+  -- updated <- flip forkMapM textures $ \texture ->
+  updated <- forM textures $ \texture ->
     if length (assignments texture) == 0 then -- if not active then
       if isNothing (vStartTime texture)       --     do nothing
-        then return $ (Just $ Vid texture, Nothing)
-        else return $ (Just $ Vid $ texture { vStartTime = Nothing }, Nothing)
+        -- then return $ (Just $ Vid texture, Nothing)
+        then return $ (Just $ Vid texture, False)
+        -- else return $ (Just $ Vid $ texture { vStartTime = Nothing }, Nothing)
+        else return $ (Just $ Vid $ texture { vStartTime = Nothing }, False)
     else if vRate texture <= 0 then           -- else if the rate is 0 or less then
-      return $ (Just $ Vid texture, Nothing)  --     do nothing
+      -- return $ (Just $ Vid texture, Nothing)  --     do nothing
+      return $ (Just $ Vid texture, False)  --     do nothing
     else do                                   -- else
       let getFrame      = vNextFrame texture  --     display the next frame
           cleanupFFmpeg = vCleanupFFmpeg texture
@@ -509,12 +513,35 @@ updateVideos shaderProgram texUnitsUsed textures = do
       let currentTime = fromMaybe 0.0 $ ((fromMaybe 0.0 glCurrentTime) -) <$> startTime
           scheduledTime =  frameIndexD * frameInterval * (1 / rate)
 
+      -- putStrLn ""
+      -- putStrLn $ "*** Debug: startTime = " ++ (show startTime)
+      -- putStrLn $ "*** Debug: currentTime = " ++ (show currentTime)
+      -- putStrLn $ "*** Debug: scheduledTime = " ++ (show scheduledTime)
+      -- putStrLn $ "*** Debug: frameIndex = " ++ (show frameIndex)
+
       if currentTime < scheduledTime && not (currentTime == 0.0) then do
-        return $ (Just (Vid texture), Nothing)
+        -- return $ (Just (Vid texture), Nothing)
+        return $ (Just (Vid texture), False)
       else do
         let skippedFrames = if isJust startTime
                               then floor $ (currentTime - scheduledTime) / frameInterval
                               else 0
+
+        -- if skippedFrames > 0 then do
+        --   putStrLn $ "*** Debug: skippedFrames = " ++ (show skippedFrames)
+        --   putStrLn $ "*** Debug: startTime = " ++ (show startTime)
+        --   putStrLn $ "*** Debug: currentTime = " ++ (show currentTime)
+        --   putStrLn $ "*** Debug: scheduledTime = " ++ (show scheduledTime)
+        --   putStrLn $ "*** Debug: frameIndex = " ++ (show frameIndex)
+        -- else
+        --   return ()
+
+
+        -- TODO: check if skipped frames go over the end of the video
+        --       - if so, check if video loops and skip remaining number of frames
+        --         into the start of the video.
+        --       - if not, free up resources and clear texture object
+
         -- skip over any missed frames
         replicateM_ skippedFrames getFrame
 
@@ -522,10 +549,12 @@ updateVideos shaderProgram texUnitsUsed textures = do
         (frameRead, (dynamicImg', frameTimestamp)) <- readFrame frame
         if frameRead then do
           -- bindTexture shaderProgram texture (convertRGB8 dynamicImg')
-          let img = convertRGB8 dynamicImg'
+          writeToTexture texture (convertRGB8 dynamicImg')
+          -- let img = convertRGB8 dynamicImg'
           glCurrentTime' <- GLFW.getTime
-          img `seq` return (Just $ Vid $ VideoTexture (texObj texture)
-                                             textureUnit
+          -- img `seq` return (Just $ Vid $ VideoTexture (texObj texture)
+          return (Just $ Vid $ VideoTexture (texObj texture)
+                                             (texUnit texture)
                                              (assignments texture)
                                              (vID texture)
                                              (vLoop texture)
@@ -535,20 +564,23 @@ updateVideos shaderProgram texUnitsUsed textures = do
                                              (if isNothing startTime then
                                                 (\t -> t - scheduledTime) <$> glCurrentTime'
                                               else startTime)
-                                             frameIndex
+                                             (frameIndex + skippedFrames)
                                              (if frameIndex >= 1 && isNothing fps then
                                                 Just (frameIndexD / frameTimestamp)
                                               else fps)
                                              (vRate texture)
-                            , Just img)
+                            -- , Just img)
+                            , True)
         else if vLoop texture then do
           (getFrame', cleanupFFmpeg') <- loopVideo cleanupFFmpeg (vFilePath texture)
           frame1           <- getFrame'
           (_, (dynamicImg1, _frameTimestamp')) <- readFrame frame1
           -- bindTexture shaderProgram texture (convertRGB8 dynamicImg1)
-          let img = convertRGB8 dynamicImg1
+          writeToTexture texture (convertRGB8 dynamicImg1)
+          -- let img = convertRGB8 dynamicImg1
           glCurrentTime' <- GLFW.getTime
-          img `seq` return (Just $ Vid $ VideoTexture (texObj texture)
+          -- img `seq` return (Just $ Vid $ VideoTexture (texObj texture)
+          return (Just $ Vid $ VideoTexture (texObj texture)
                                              textureUnit
                                              (assignments texture)
                                              (vID texture)
@@ -560,19 +592,33 @@ updateVideos shaderProgram texUnitsUsed textures = do
                                              0
                                              (vFps texture)
                                              (vRate texture)
-                            , Just img)
+                            -- , Just img)
+                            , True)
           else do -- video has finished and is set to not loop
             cleanupFFmpeg
-            return (Nothing, Nothing)
+            -- return (Nothing, Nothing)
+            return (Nothing, False)
 
-  updatedTextures <- forM (zip [0..] updated) $ \vidDataOrErr ->
-    case vidDataOrErr of
-      (i, Left _error) -> return $ Just $ Vid (textures !! i)
-      (_, Right (tex, Nothing)) -> return tex
-      (_, Right (Just tex, Just img)) -> do
-        bindTexture shaderProgram tex img
+  -- updatedTextures <- forM (zip [0..] updated) $ \vidDataOrErr ->
+  --   case vidDataOrErr of
+  --     (i, Left _error) -> do
+  --       putStrLn "*** Debug: error in forkMapM"
+  --       return $ Just $ Vid (textures !! i)
+  --     (_, Right (tex, Nothing)) -> return tex
+  --     (_, Right (Just tex, Just img)) -> do
+  --       bindTexture shaderProgram tex img
+  --       return $ Just tex
+  --     (_, Right (Nothing, _)) -> return Nothing
+
+  -- return updatedTextures
+
+  updatedTextures <- forM (zip [(0::Int)..] updated) $ \vidData ->
+    case vidData of
+      (_, (tex, False)) -> return tex
+      (_, (Just tex, True)) -> do
+        bindTexture' shaderProgram tex (texObj tex, 0.0)
         return $ Just tex
-      (_, Right (Nothing, _)) -> return Nothing
+      (_, (Nothing, _)) -> return Nothing
 
   return updatedTextures
 
@@ -614,7 +660,7 @@ updateLVid shaderProgram texUnitsUsed texture =
 
         bindTexture' shaderProgram texture frame
         glCurrentTime' <- GLFW.getTime
-        return $ Just $ LVd $ LoadedVideo textureUnit
+        return $ Just $ LVd $ LoadedVideo (texUnit texture)
                                           (assignments texture)
                                           (lvID texture)
                                           (lvLoop texture)
@@ -646,6 +692,29 @@ updateLVid shaderProgram texUnitsUsed texture =
         forM_ (lvFrames texture) $ \(tObj, _) ->
           deleteObjectName tObj
         return Nothing
+
+
+writeToTexture :: TextureClass t => t -> Image PixelRGB8 -> IO ()
+writeToTexture texture textureRGB8 = do
+  let texWidth     = fromIntegral $ imageWidth  textureRGB8
+      texHeight    = fromIntegral $ imageHeight textureRGB8
+      -- texData      = imageData textureRGB8
+      textureObject = texObj texture
+      -- textureUnit   = texUnit texture
+
+  -- bind texture
+  GL.activeTexture $= GL.TextureUnit (0 :: GL.GLuint)
+  GL.textureBinding GL.Texture2D $= Just textureObject
+  -- set the texture wrapping parameters
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
+  -- set texture filtering parameters
+  GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
+  SV.unsafeWith (imageData textureRGB8) $ \ptr ->
+    GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGB8
+      (GL.TextureSize2D texWidth texHeight) 0
+      (GL.PixelData GL.RGB GL.UnsignedByte ptr)
+  GL.generateMipmap' GL.Texture2D
 
 
 bindTexture :: TextureClass t => GL.Program -> t -> Image PixelRGB8 -> IO ()

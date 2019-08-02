@@ -404,13 +404,12 @@ processCommands textures shouldExit nodeTree msgQIn stateRef = do
         {- TODO: if the node tree is empty, insert a 'blank' shader program.
         -}
 
-        currentTime <- GLFW.getTime
         atomically $ modifyTVar' textures $ map $ \tex ->
           case tex of
             Vid texture ->
               let newAssigns = filter (\(gID',_,_) -> gID' /= gID) (assignments texture)
               in  if length newAssigns == 0 then
-                    updateStartTime currentTime (updateAssignments [] tex)
+                    updateStartTime Nothing (updateAssignments [] tex)
                   else (updateAssignments [] tex)
             Img texture ->
               let newAssigns = filter (\(gID',_,_) -> gID' /= gID) (assignments texture)
@@ -418,7 +417,7 @@ processCommands textures shouldExit nodeTree msgQIn stateRef = do
             LVd texture ->
               let newAssigns = filter (\(gID',_,_) -> gID' /= gID) (assignments texture)
               in  if length newAssigns == 0 then
-                    updateStartTime currentTime (updateAssignments [] tex)
+                    updateStartTime Nothing (updateAssignments [] tex)
                   else (updateAssignments [] tex)
 
 
