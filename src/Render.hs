@@ -150,6 +150,11 @@ renderNoFB textures nodeTree stateRef uniformVals textureQueue ss vao window = d
   let uniformUpdates = IntMap.fromListWith (++)
                      $ map (\unitData -> (uDataNodeID unitData, [unitData])) uniforms
 
+  OutBus _ (Bus outBusFbo outBusTObj) <- readIORef stateRef >>= return . wsDefaultOutBus
+  GL.bindFramebuffer GL.Framebuffer $= outBusFbo
+  GL.clearNamedFramebuffer outBusFbo
+    $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
+
   forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inBuses (OutBus _wireID (Bus out _))) -> do
     GL.currentProgram $= Just shaderProgram
     forM_ (fromMaybe [] $ IntMap.lookup nID uniformUpdates) $ \u -> do
@@ -176,25 +181,22 @@ renderNoFB textures nodeTree stateRef uniformVals textureQueue ss vao window = d
       bindInputBus shaderProgram i wireID tObj
 
     GL.bindFramebuffer GL.Framebuffer $= out
-    GL.clearColor $= GL.Color4 0.0 0.0 0.0 1.0
-    GL.clear [GL.ColorBuffer]
+    GL.clearNamedFramebuffer out
+      $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
+
     GL.currentProgram $= Just shaderProgram
     GL.bindVertexArrayObject $= Just vao
     GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
 
 
-  textureObj <- readIORef stateRef
-                >>= return . (\(OutBus _ (Bus _ tObj)) -> tObj) . wsDefaultOutBus
-
-
   GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
-  GL.clearColor $= GL.Color4 0.0 0.0 0.0 1.0
-  GL.clear [GL.ColorBuffer]
+  GL.clearNamedFramebuffer GL.defaultFramebufferObject
+    $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
 
   GL.currentProgram $= Just ss
   GL.bindVertexArrayObject $= Just vao
   GL.activeTexture $= (GL.TextureUnit 0)
-  GL.textureBinding GL.Texture2D $= Just textureObj
+  GL.textureBinding GL.Texture2D $= Just outBusTObj
   GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
 
   GLFW.swapBuffers window
@@ -422,6 +424,11 @@ processCommands textures shouldExit nodeTree msgQIn stateRef = do
         modifyIORef nodeTree $ \nt -> IntMap.delete gID nt
 
         {- TODO: if the node tree is empty, insert a 'blank' shader program.
+        -}
+
+        {- TODO: delete the framebuffer objects associated with the graph being
+                 freed. glDeleteFramebuffers.
+                 also clear/delete the associated textures
         -}
 
         atomically $ modifyTVar' textures $ map $ \tex ->
