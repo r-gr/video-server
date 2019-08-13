@@ -19,6 +19,7 @@ import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import System.ZMQ4 (Socket, Sub)
+import Text.Printf
 
 import GLUtils
 import Graph
@@ -51,6 +52,11 @@ newWindow sock msgQIn msgQOut winID width height =
     iter1Ref      <- newIORef True
     threadID      <- forkIO $ forever $ receiveDataMsg sock winID uniformVals textures textureQueue
 
+    -- FPS counter setup
+    initTime      <- GLFW.getTime
+    lastTime      <- newIORef (fromJust initTime)
+    numFrames     <- newIORef (0.0 :: Double)
+
     -- create a default output bus
     (defaultFbo, defaultTexOut) <- setupFramebuffer width height
     let defaultBus = Bus defaultFbo defaultTexOut
@@ -73,6 +79,17 @@ newWindow sock msgQIn msgQOut winID width height =
       nodeTree' <- readIORef nodeTree
       let ugens         = concatMap (\(Node _ us) -> us) $ IntMap.elems nodeTree'
           prevFrameUGen = 0 == (length $ filter (\u -> scUnitName u == "GLPrevFrame" || scUnitName u == "GLPrevFrame2") $ ugens)
+
+      -- set window title to current FPS
+      currentTime <- GLFW.getTime >>= return.fromJust
+      modifyIORef numFrames (+ 1.0)
+      lastTime' <- readIORef lastTime
+      if currentTime - lastTime' >= 1.0 then do
+        numFrames' <- readIORef numFrames
+        setWindowTitle window $ numFrames' / (currentTime - lastTime')
+        writeIORef numFrames 0.0
+        writeIORef lastTime currentTime
+      else return ()
 
       if wsc then do
         closeWindow winID textures shouldExit
@@ -107,6 +124,9 @@ newWindow sock msgQIn msgQOut winID width height =
 
     putStrLn $ "*** Info: Window "+|winID|+" - Killing sub socket thread"
     killThread threadID
+  where
+    setWindowTitle window fps = GLFW.setWindowTitle window $
+      "window "+|winID |+" ("+|(printf "%.0f" fps :: String)|+" fps)"
 
 
 renderNoFB :: TVar [Texture]
