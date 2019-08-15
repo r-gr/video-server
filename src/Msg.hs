@@ -1,16 +1,12 @@
-{-# LANGUAGE DeriveGeneric #-}
-
-module Msg ( UnitData(..)
-           , Msg(..)
-           , TextureUpdate(..)
-           , getUnitData
+module Msg ( getUnitData
            , removeNullChar
            , receiveDataMsg
            ) where
 
 
-import Control.Concurrent.STM
-import Data.Aeson
+import Prelude (putStrLn)
+import RIO
+
 import Data.Binary (Get)
 import Data.Binary.Get (runGet, getInt32host, getFloathost, getWord16host)
 import Data.ByteString (ByteString)
@@ -18,51 +14,10 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as C
 import Data.ByteString.Lazy (fromStrict)
 import Data.Int (Int32)
-import Data.Word
-import GHC.Generics
 import System.ZMQ4 (Socket, Sub, receive)
 
-import Texture
 import Types
 
-
-data Msg
-  = GraphNew  { nodeID :: NodeID
-              , units  :: [SCUnit]
-              }
-  | GraphFree { nodeID :: NodeID }
-  | GLWindowNew  { windowID     :: WindowID
-                 , windowWidth  :: Int
-                 , windowHeight :: Int
-                 }
-  | GLWindowFree { windowID :: WindowID }
-  | GLVideoNew  { videoID   :: Int
-                , videoPath :: FilePath
-                , videoRate :: Float
-                , videoLoop :: Bool
-                , windowID  :: WindowID
-                }
-  | GLVideoRead { videoID   :: Int
-                , videoPath :: FilePath
-                , videoRate :: Float
-                , videoLoop :: Bool
-                , windowID  :: WindowID
-                }
-  | GLVideoFree { videoID  :: Int
-                , windowID :: WindowID
-                }
-  | GLImageNew  { imageID   :: Int
-                , imagePath :: FilePath
-                , windowID  :: WindowID
-                }
-  | GLImageFree { imageID  :: Int
-                , windowID :: WindowID
-                }
-  | InternalWindowFree { windowID :: WindowID }
-  | InternalServerQuit
-  deriving (Generic, Show)
-
-instance FromJSON Msg
 
 data DataMsg = UnitDataMsg    RawUnitData
              | AssignVideoMsg RawAssignVideo
@@ -89,18 +44,6 @@ data RawAssignImage = RawAssignImage
   , rawAIUnitID  :: !Int32
   , rawAIImageID :: !Int32
   } deriving (Show)
-
-data UnitData = UnitData
-  { uDataNodeID :: Int
-  , uDataUnitID  :: Int
-  , uDataInput   :: Int
-  , uDataValue   :: Float
-  } deriving (Show)
-
-data TextureUpdate
-  = AssignVideo (NodeID, UnitID, Int) Int
-  | AssignImage (NodeID, UnitID, Int) Int
-  deriving (Show)
 
 
 receiveDataMsg :: Socket Sub -> WindowID -> TBQueue UnitData -> TVar [Texture] -> TBQueue TextureUpdate -> IO ()

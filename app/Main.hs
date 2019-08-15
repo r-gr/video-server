@@ -1,19 +1,15 @@
-{-# LANGUAGE OverloadedStrings, BangPatterns #-}
-
 module Main (main) where
 
+
+import Prelude (putStrLn)
+import RIO
 
 import Options.Applicative
 import Data.Semigroup ((<>))
 
 import Server (runServer)
+import Types (CmdLineOpts(..))
 
-
-data CmdLineOpts = CmdLineOpts
-  { version :: Bool
-  , cmdMsgSock :: String
-  , dataMsgSock :: String
-  }
 
 cmdLineOpts :: Parser CmdLineOpts
 cmdLineOpts = CmdLineOpts
@@ -23,16 +19,23 @@ cmdLineOpts = CmdLineOpts
               )
            <*> strOption
               ( long "cmd-msg-sock"
-             <> value "ipc://@sc-video_cmd-msgs"
+             <> value "ipc://@scvid_cmd-msgs"
              <> showDefault
              <> help "The (ZeroMQ) endpoint where command messages are received"
              <> metavar "ENDPOINT"
               )
            <*> strOption
               ( long "data-msg-sock"
-             <> value "ipc://@sc-video_data-msgs"
+             <> value "ipc://@scvid_data-msgs"
              <> showDefault
              <> help "The (ZeroMQ) endpoint where data messages are received"
+             <> metavar "ENDPOINT"
+              )
+           <*> strOption
+              ( long "response-sock"
+             <> value "ipc://@scvid_responses"
+             <> showDefault
+             <> help "The (ZeroMQ) endpoint where responses are sent to scsynth"
              <> metavar "ENDPOINT"
               )
 
@@ -43,7 +46,7 @@ main = do
   if version opts then
     putStrLn "scvid alpha"
   else
-    runServer
+    runServer opts
   where
     getOpts = info (cmdLineOpts <**> helper)
       ( fullDesc

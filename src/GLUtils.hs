@@ -1,8 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module GLUtils
-    ( withWindow
-    , processInput
+    ( processInput
     , compileShaderProgram
     , initialiseFFmpeg
     , newImageTexture
@@ -20,14 +17,17 @@ module GLUtils
     ) where
 
 
+import Prelude (putStrLn)
+import RIO
+import RIO.Partial
+import RIO.List.Partial
+import qualified RIO.Text as Text
+
 import qualified Codec.FFmpeg as F
 import Codec.FFmpeg.Juicy (JuicyPixelFormat)
 import Codec.Picture
-import Control.Monad
-import Control.Monad.Loops (forkMapM, whileM)
+import Control.Monad.Loops (whileM)
 import Data.ByteString (ByteString)
-import Data.IORef
-import Data.Maybe (isJust, fromJust, isNothing, fromMaybe)
 import Data.ObjectName
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as SV
@@ -42,34 +42,7 @@ import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 
 import Shader (uniformName)
-import Texture
 import Types
-
-
-withWindow :: Int -> Int -> String -> (GLFW.Window -> IO ()) -> IO ()
-withWindow width height title fn = do
-  successfulInit <- GLFW.init
-  if not successfulInit
-    then do
-      putStrLn "*** Error: couldn't initialise GLFW context"
-    else do
-      GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 4
-      GLFW.windowHint $ GLFW.WindowHint'ContextVersionMinor 3
-      GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
-      -- GLFW.windowHint $ GLFW.WindowHint'RefreshRate $ Just 240
-
-      window <- GLFW.createWindow width height ("scsynth-video '" ++ title ++ "'") Nothing Nothing
-      case window of
-        Nothing -> do
-          GLFW.terminate
-          putStrLn "*** Error: couldn't create GLFW window"
-        Just w -> do
-          GLFW.makeContextCurrent window
-          GLFW.setFramebufferSizeCallback w $ Just framebufferSizeCallback
-          fn w
-          putStrLn $ "*** Info: Window '"+|title|+"' - Closing GLFW context"
-          GLFW.destroyWindow w
-          GLFW.terminate
 
 
 processInput :: GLFW.Window -> Maybe GLFW.Monitor -> GLFW.VideoMode -> IORef Bool -> IO ()
@@ -90,11 +63,6 @@ processInput window monitor videoMode isFullscreen = do
           Just mon -> GLFW.setFullscreen window mon videoMode
           Nothing  -> return ()
     writeIORef isFullscreen $ not fullscreen
-
-
-framebufferSizeCallback :: GLFW.FramebufferSizeCallback
-framebufferSizeCallback _window width height =
-  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
 
 
 compileShaderProgram :: ByteString -> ByteString -> IO GL.Program
@@ -152,7 +120,7 @@ setupGeometry = do
       vertexSize      = fromIntegral $ sizeOf (head vertices)
       numVertices     = fromIntegral $ length vertices
       vertexArraySize = fromIntegral $ numVertices * vertexSize
-      numIndices      = fromIntegral $ length indices
+      numIndices      = length indices
       indexArraySize  = fromIntegral $ numIndices * sizeOf (head indices)
 
   vao <- genObjectName
@@ -229,15 +197,15 @@ setupFramebuffer width height = do
 --	  return $ Right (framebuffer, textureColorbuffer)
 
 
-setFloatUniform :: GL.Program -> String -> Float -> IO ()
+setFloatUniform :: GL.Program -> Text -> Float -> IO ()
 setFloatUniform shaderProgram uName floatValue = do
-  uniformLoc <- GL.get $ GL.uniformLocation shaderProgram uName
+  uniformLoc <- GL.get $ GL.uniformLocation shaderProgram $ Text.unpack uName
   GL.uniform uniformLoc $= floatValue
 
 
-setFloatUniform' :: GL.Program -> String -> Float -> IO ()
+setFloatUniform' :: GL.Program -> Text -> Float -> IO ()
 setFloatUniform' shaderProgram uName floatValue = do
-  uniformLoc <- GL.get $ GL.uniformLocation shaderProgram uName
+  uniformLoc <- GL.get $ GL.uniformLocation shaderProgram $ Text.unpack uName
   if uniformLoc >= (GL.UniformLocation 0) then do
     GL.uniform uniformLoc $= floatValue
   else do
@@ -439,7 +407,7 @@ loadVideo getFrame cleanupFFmpeg = do
       cleanupFFmpeg
       return (Nothing, frameTimestamp)
 
-  return $ V.fromList $ map (\(Just tObj, ts) -> (tObj, ts))
+  return $ V.fromList $ map (\(mbTObj, ts) -> (fromJust mbTObj, ts))
                       $ filter (\(mbTexObj, _) -> isJust mbTexObj)
                       $ frames
 
@@ -736,7 +704,7 @@ bindTexture shaderProgram texture textureRGB8 = do
     GL.currentProgram $= Just shaderProgram
 
     GL.activeTexture $= textureUnit
-    texLocation <- GL.uniformLocation shaderProgram $ uniformName gID uID uIn
+    texLocation <- GL.uniformLocation shaderProgram $ Text.unpack $ uniformName gID uID uIn
     -- putStrLn $ uniformName gID uID uIn
 
     if texLocation >= (GL.UniformLocation 0)
@@ -772,7 +740,7 @@ bindTexture' shaderProgram texture (textureObject, _ts) = do
     GL.currentProgram $= Just shaderProgram
 
     GL.activeTexture $= textureUnit
-    texLocation <- GL.uniformLocation shaderProgram $ uniformName gID uID uIn
+    texLocation <- GL.uniformLocation shaderProgram $ Text.unpack $ uniformName gID uID uIn
     -- putStrLn $ uniformName gID uID uIn
 
     if texLocation >= (GL.UniformLocation 0)

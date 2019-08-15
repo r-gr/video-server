@@ -1,5 +1,4 @@
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module Shader ( Shader(..)
               , ugenShaderFns
@@ -12,14 +11,21 @@ module Shader ( Shader(..)
               ) where
 
 
+import Prelude (putStrLn)
+import RIO
+import RIO.ByteString (ByteString)
+import RIO.List
+import RIO.List.Partial
+import qualified RIO.Text as Text
+
 import Control.Monad (forM)
-import Data.ByteString (ByteString)
-import Data.ByteString.Char8 (pack, unpack)
+-- import Data.ByteString (ByteString)
+-- import Data.ByteString.Char8 (pack, unpack)
+import qualified Data.ByteString.Char8 as C
 import Data.FileEmbed (embedDir, embedFile)
 import Data.List (nub)
 import Data.List.Split (splitOneOf)
 import Data.List.Utils (endswith)
-import Data.Maybe
 import Fmt
 import System.Directory
 import System.IO.Error (catchIOError)
@@ -28,9 +34,9 @@ import System.IO.Unsafe (unsafePerformIO)
 import Types
 
 
-data Shader = Shader { shaderName :: String
-                     , shaderGlslFn :: String
-                     , shaderInputs :: [String]
+data Shader = Shader { shaderName :: Text
+                     , shaderGlslFn :: Text
+                     , shaderInputs :: [Text]
                      } deriving (Show)
 
 
@@ -49,8 +55,8 @@ ugenShaderFns = unsafePerformIO $ do
         files <- listDirectory appDir >>= return . (filter (endswith ".frag"))
         putStrLn "*** Debug: reading UGen shader functions from XdgData dir"
         forM files $ \f -> do
-          contents <- readFile f
-          return $ loadShader (f, pack contents)
+          contents <- readFileUtf8 f
+          return $ loadShader (f, contents)
       else do
         putStrLn "*** Debug: reading UGen shader functions from embedded files"
         return []
@@ -62,7 +68,7 @@ ugenShaderFns = unsafePerformIO $ do
    duration of the program's execution.
 -}
 embeddedShaders :: [Shader]
-embeddedShaders = map loadShader $(embedDir "lib/fragment_shaders")
+embeddedShaders = map (loadShader.(\(f, bs) -> (f, Text.pack $ C.unpack bs))) $(embedDir "lib/fragment_shaders")
 
 vertexShader :: ByteString
 vertexShader = $(embedFile "lib/vertex_shader.vert")
@@ -76,22 +82,24 @@ screenVertShader = $(embedFile "lib/screen_shader.vert")
 screenFragShader :: ByteString
 screenFragShader = $(embedFile "lib/screen_shader.frag")
 
-loadShader :: (FilePath, ByteString) -> Shader
+loadShader :: (FilePath, Text) -> Shader
 loadShader (path, fileContents) =
-  let glslFn = unpack fileContents
-  in  Shader { shaderName = takeWhile (/= '.') path
+  let glslFn = fileContents
+  in  Shader { shaderName = Text.takeWhile (/= '.') $ Text.pack path
              , shaderGlslFn = glslFn
              , shaderInputs = parseFnSig glslFn
              }
 
-parseFnSig :: String -> [String]
+parseFnSig :: Text -> [Text]
 parseFnSig glslFn =
   glslFn
-  |> takeWhile (/= ')')
-  |> lines
-  |> concat
-  |> dropWhile (/= '(')
+  |> Text.takeWhile (/= ')')
+  |> Text.lines
+  |> Text.concat
+  |> Text.dropWhile (/= '(')
+  |> Text.unpack -- TODO: avoid conversion to String and back
   |> splitOneOf "(), "
+  |> map Text.pack
   |> filter (not . (flip elem) ["", "in", "out", "inout"])
   |> argTypes
   where
@@ -105,7 +113,7 @@ parseFnSig glslFn =
 -}
 generateFragShader :: SubGraph -> FragShader
 generateFragShader (SubGraph units inputs output) =
-  let fsCode = concat [ fsHeader
+  let fsCode = Text.concat [ fsHeader
                       , fsUniforms inputs units
                       , fsFunctions units
                       , "void main() {\n"
@@ -115,53 +123,53 @@ generateFragShader (SubGraph units inputs output) =
                       ]
   in  FragShader fsCode inputs output
   where
-    fsHeader = concat [ "#version 330 core\n\n"
+    fsHeader = Text.concat [ "#version 330 core\n\n"
                       , "in  vec2 TexCoord;\n"
                       , "out vec4 FragColor;\n\n"
                       , "uniform sampler2D sc_PrevFrame;\n\n"
                       ]
 
 
-fsUniforms :: [Link] -> Graph -> String
-fsUniforms inputs graph = (inputBusUniforms inputs) ++ (graphUniforms graph)
+fsUniforms :: [Link] -> Graph -> Text
+fsUniforms inputs graph = Text.append (inputBusUniforms inputs) (graphUniforms graph)
   where
-    inputBusUniforms :: [Link] -> String
-    inputBusUniforms ins = flip concatMap ins $ \i ->
+    inputBusUniforms :: [Link] -> Text
+    inputBusUniforms ins = Text.pack $ flip concatMap ins $ \i ->
       case i of LBus wireID _ _ -> "uniform sampler2D u_Bus_Local_"+|wireID|+";\n"
                 Wire _      _ _ -> ""
 
-    graphUniforms :: Graph -> String
+    graphUniforms :: Graph -> Text
     graphUniforms units =
       let outWires = map unitOutput units
-      in  concatMap (unitUniforms outWires) units
+      in  Text.concat $ map (unitUniforms outWires) units
 
-    unitUniforms :: [WireID] -> Unit -> String
+    unitUniforms :: [WireID] -> Unit -> Text
     unitUniforms outWires unit =
       let inWires = unitInputs unit
           args = getShaderInputs $ unitName unit
           signalInputs = map (\(i, glslType, _w) -> (i, glslType))
                        $ filter (\(_i, _type, w) -> notElem w outWires && (notElem w $ lBusIDs inputs))
                        $ zip3 [0::Int ..] args inWires
-      in  flip concatMap signalInputs $ \(i, glslType) ->
-            "uniform "+|glslType|+" in_Graph_"+|nodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+";\n"
+      in  Text.concat $ flip map signalInputs $ \(i, glslType) ->
+            "uniform "+|glslType|+" in_Graph_"+|unitNodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+";\n"
 
 
-fsFunctions :: Graph -> String
-fsFunctions units = (concatMap getShaderFn).nub $ map unitName units
+fsFunctions :: Graph -> Text
+fsFunctions = Text.concat.(map getShaderFn).nub.(map unitName)
 
 
-fsMain :: [Link] -> Maybe Link -> Graph -> String
+fsMain :: [Link] -> Maybe Link -> Graph -> Text
 fsMain inputs output graph = graphCode graph
   where
-    graphCode :: Graph -> String
+    graphCode :: Graph -> Text
     graphCode units =
       let outWires = map unitOutput units
-      in  concatMap (unitCode outWires) units
+      in  Text.concat $ map (unitCode outWires) units
 
-    unitCode :: [WireID] -> Unit -> String
+    unitCode :: [WireID] -> Unit -> Text
     unitCode outWires unit = functionCall unit outWires $ unitOutput unit
 
-    functionCall :: Unit -> [WireID] -> WireID -> String
+    functionCall :: Unit -> [WireID] -> WireID -> Text
     functionCall unit outWires wireID =
       let name = unitName unit
           isGLOut = name == "GLOut"
@@ -170,58 +178,58 @@ fsMain inputs output graph = graphCode graph
           --   output to FragColor
           assignment = case output of
             Just (LBus _ src _) -> if (unitID unit) == src
-              then       "    FragColor = " :: String
-              else       "    "+|fnType name|+" Graph_"+|nodeID unit|+"_Wire_"+|wireID|+" = "
+              then       "    FragColor = " :: Text
+              else       "    "+|fnType name|+" Graph_"+|unitNodeID unit|+"_Wire_"+|wireID|+" = "
             _ -> case name of
-              "GLOut" -> "    FragColor = " :: String
-              _       -> "    "+|fnType name|+" Graph_"+|nodeID unit|+"_Wire_"+|wireID|+" = "
+              "GLOut" -> "    FragColor = " :: Text
+              _       -> "    "+|fnType name|+" Graph_"+|unitNodeID unit|+"_Wire_"+|wireID|+" = "
 
-      in  concat [ assignment
+      in  Text.concat [ assignment
                  , unitName unit
                  , if isGLOut then "(FragColor, " else "("
                  , inputList (unitName unit) (zip [0..] $ unitInputs unit)
                  , ");\n"
                  ]
       where
-        inputList :: String -> [(Int, WireID)] -> String
+        inputList :: Text -> [(Int, WireID)] -> Text
         inputList uName inWires =
           case inWires of
             [] -> ""
             [(i, w)] -> if elem w outWires && (notElem w $ lBusIDs inputs) then
-                          "Graph_"+|nodeID unit|+"_Wire_"+|w|+""
+                          "Graph_"+|unitNodeID unit|+"_Wire_"+|w|+""
                         else if (elem w $ lBusIDs inputs) && isJust (partitionOn uName) then
                           "u_Bus_Local_"+|w|+""
                         else if elem w $ lBusIDs inputs then
                           "texture(u_Bus_Local_"+|w|+", TexCoord)"
                         else
-                          "in_Graph_"+|nodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+""
+                          "in_Graph_"+|unitNodeID unit|+"_Unit_"+|unitID unit|+"_"+|i|+""
             hd:tl -> ""+|inputList uName [hd]|+", "+|inputList uName tl|+""
 
 
 {- Utility functions -}
 
-uniformName :: Int -> Int -> Int -> String
+uniformName :: Int -> Int -> Int -> Text
 uniformName gID uID index = "in_Graph_"+|gID|+"_Unit_"+|uID|+"_"+|index|+""
 
 
-getShaderInputs :: String -> [String]
+getShaderInputs :: Text -> [Text]
 getShaderInputs name =
   shaderInputs . head $ filter (\s -> shaderName s == name) ugenShaderFns
 
 
-getShaderFn :: String -> String
+getShaderFn :: Text -> Text
 getShaderFn name =
   shaderGlslFn . head $ filter (\s -> shaderName s == name) ugenShaderFns
 
 
-fnType :: String -> String
+fnType :: Text -> Text
 fnType name =
   ugenShaderFns
   |> filter (\s -> shaderName s == name)
   |> head
   |> shaderGlslFn
-  |> dropWhile (== ' ') -- strip leading whitespace
-  |> takeWhile (/= ' ') -- strip space after type identifier
+  |> Text.dropWhile (== ' ') -- strip leading whitespace
+  |> Text.takeWhile (/= ' ') -- strip space after type identifier
   where
     x |> f = f x
 

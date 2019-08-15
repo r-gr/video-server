@@ -1,10 +1,12 @@
 module Graph (partition) where
 
-import Control.Monad
+
+import RIO
+import RIO.List.Partial
+
 import Control.Monad.Loops
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
-import Data.IORef
 import Data.List (groupBy, nub, sortOn)
 import Data.Maybe
 
@@ -43,7 +45,7 @@ toGraph units =
   flip map units $ \(SCUnit name uID nID ins outs) ->
     Unit { unitName = name
          , unitID = uID
-         , nodeID = nID
+         , unitNodeID = nID
          , unitInputs = ins
          , unitOutput = (head outs)
          , unitPartitionOn = partitionOn name
@@ -87,10 +89,10 @@ partition scUnits = do
 
       forM_ wiresToChange $ \w -> do
         links <- readIORef linksRef
-        let link = links IntMap.! w
-            newLink = case link of
-                        Wire wireID from to -> LBus wireID from to
-                        LBus _      _    _  -> link
+        let linkW = links IntMap.! w
+            newLink = case linkW of
+                        Wire wireID uFrom uTo -> LBus wireID uFrom uTo
+                        LBus _      _     _   -> linkW
 
         writeIORef linksRef $ IntMap.insert w newLink links
 
@@ -208,7 +210,7 @@ groupUnitsInSubGraphs units links =
     subGraphInputs graph =
       graph
       |> concatMap (unitInputs.fst)
-      |> filter (\link -> case IntMap.lookup link links of
+      |> filter (\l -> case IntMap.lookup l links of
                             Just (LBus _ _ _) -> True
                             _ -> False)
       |> map (links IntMap.!)
