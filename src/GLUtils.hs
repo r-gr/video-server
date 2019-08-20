@@ -171,8 +171,8 @@ setupFramebuffer width height = do
   -- create a color attachment texture
   textureColorbuffer <- genObjectName
   GL.textureBinding GL.Texture2D $= Just textureColorbuffer
-  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
-  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
   GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
   GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGB'
     (GL.TextureSize2D (fromIntegral width) (fromIntegral height)) 0
@@ -342,8 +342,8 @@ setupTexture tID = do
   GL.activeTexture $= textureUnit
   GL.textureBinding GL.Texture2D $= Just textureObject
   -- set the texture wrapping parameters
-  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
-  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
   GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
   -- set texture filtering parameters
   GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
@@ -358,8 +358,8 @@ setupTexture' = do
   GL.activeTexture $= GL.TextureUnit (0 :: GL.GLuint)
   GL.textureBinding GL.Texture2D $= Just textureObject
   -- set the texture wrapping parameters
-  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
-  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
   GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
   -- set texture filtering parameters
   GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
@@ -390,8 +390,8 @@ loadVideo getFrame cleanupFFmpeg = do
       GL.activeTexture $= GL.TextureUnit (0 :: GL.GLuint)
       GL.textureBinding GL.Texture2D $= Just textureObject
       -- set the texture wrapping parameters
-      GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
-      GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+      GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
+      GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
       GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
       -- set texture filtering parameters
       GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
@@ -680,8 +680,8 @@ writeToTexture texture textureRGB8 = do
   GL.activeTexture $= GL.TextureUnit (0 :: GL.GLuint)
   GL.textureBinding GL.Texture2D $= Just textureObject
   -- set the texture wrapping parameters
-  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
-  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
   GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
   -- set texture filtering parameters
   GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
@@ -715,8 +715,8 @@ bindTexture shaderProgram texture textureRGB8 = do
         GL.activeTexture $= textureUnit
         GL.textureBinding GL.Texture2D $= Just textureObject
         -- set the texture wrapping parameters
-        GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
-        GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+        GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
+        GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
         GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
         -- set texture filtering parameters
         GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')

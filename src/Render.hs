@@ -74,9 +74,9 @@ renderNoFB = ask >>= \env -> liftIO $ do
                      $ map (\unitData -> (uDataNodeID unitData, [unitData])) uniforms
 
   let Bus outBusFbo outBusTObj = rsDefaultOutBus env
-  GL.bindFramebuffer GL.Framebuffer $= outBusFbo
-  GL.clearNamedFramebuffer outBusFbo
-    $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
+  -- GL.bindFramebuffer GL.Framebuffer $= outBusFbo
+  -- GL.clearNamedFramebuffer outBusFbo
+  --   $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
 
   forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inBuses (OutBus _wireID (Bus out _))) -> do
     GL.currentProgram $= Just shaderProgram
