@@ -3,9 +3,13 @@ module Window (newWindow) where
 
 import Prelude (putStrLn)
 import RIO
+import qualified RIO.List as List
+import qualified RIO.Map as Map
 import RIO.Partial (fromJust)
+import qualified RIO.Seq as Seq
 
 import Control.Concurrent
+import qualified Control.Concurrent.STM as STM
 import Control.Monad.Loops
 import Data.Foldable (foldlM)
 import Data.IntMap (IntMap)
@@ -14,15 +18,15 @@ import Fmt
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
-import System.ZMQ4 hiding (message, monitor)
+import System.ZMQ4 (Socket, Sub)
 import Text.Printf (printf)
 
 import GLUtils
 import Graph
 import Msg
+import MyPrelude
 import Render
 import Shader
-import Texture
 import Types
 
 
@@ -35,22 +39,32 @@ newWindow sock msgQIn msgQOut winID width height =
     let videoMode = GLFW.VideoMode width height 8 8 8 60
     isFullscreen <- newIORef False
 
-    uniformVals  <- newTBQueueIO 1000 :: IO (TBQueue UnitData)
-    textureQueue <- newTBQueueIO 1000 :: IO (TBQueue TextureUpdate)
-    textures     <- newTVarIO ([] :: [Texture])
-    nodeTree     <- newIORef (IntMap.empty :: IntMap Node)
+    uniformVals <- newTBQueueIO 1000 :: IO (TBQueue UnitData)
+    updateQueue <- newTBQueueIO 1000 :: IO (TBQueue WindowUpdate)
+    images      <- newTVarIO (IntMap.empty :: IntMap ImageTexture) -- note: this might not need to be a TVar.
+    videos      <- newTVarIO (IntMap.empty :: IntMap Video)        -- same here
+    players     <- newTVarIO (Map.empty :: Map Assignment Player)
+    delBufs     <- newTVarIO (IntMap.empty :: IntMap DelBuf)
+    nodeTree    <- newIORef (IntMap.empty :: IntMap Node)
+    initBuses   <- newTVarIO Map.empty
 
     -- TODO: clearly, the state should change when the window is resized etc.
     stateRef <- newIORef $ WindowState { wsWindow = window
+                                       , wsWindowID = winID
                                        , wsWidth = width
                                        , wsHeight = height
                                        , wsShouldExit = shouldExit
                                        , wsMsgQIn = msgQIn
                                        , wsMsgQOut = msgQOut
-                                       , wsTextures = textures -- TODO: better data structure
+                                       , wsSubSocket = sock
+                                       , wsImages = images
+                                       , wsVideos = videos
+                                       , wsPlayers = players
+                                       , wsDelBufs = delBufs
+                                       , wsBuses = initBuses
                                        , wsNodeTree = nodeTree
                                        , wsUniformVals = uniformVals
-                                       , wsTextureUpdates = textureQueue
+                                       , wsUpdateQueue = updateQueue
                                        }
 
     -- FPS counter setup
@@ -60,14 +74,12 @@ newWindow sock msgQIn msgQOut winID width height =
 
     renderStateRef <- setupRendering stateRef >>= newIORef
 
-    threadID <- forkIO $ forever $ receiveDataMsg sock winID uniformVals textures textureQueue
+    initWindowState <- readIORef stateRef
+    threadID        <- forkIO $ forever $ runRIO initWindowState receiveDataMsg
 
     -- main render loop
     whileM_ (fmap not $ readIORef shouldExit) $ do
       wsc <- GLFW.windowShouldClose window
-      -- nodeTree' <- readIORef nodeTree
-      -- let ugens         = concatMap (\(Node _ us) -> us) $ IntMap.elems nodeTree'
-      --     prevFrameUGen = 0 == (length $ filter (\u -> scUnitName u == "GLPrevFrame" || scUnitName u == "GLPrevFrame2") $ ugens)
 
       -- set window title to current FPS
       -- TODO: handle case where getTime returns Nothing
@@ -82,40 +94,16 @@ newWindow sock msgQIn msgQOut winID width height =
       else return ()
 
       if wsc then do
-        closeWindow winID textures shouldExit
+        windowState <- readIORef stateRef
+        runRIO windowState closeWindow
         atomically $ writeTBQueue msgQOut $ Internal (WindowFree winID)
-      -- else if prevFrameUGen then do
-
-      --   processInput window monitor videoMode isFullscreen
-
-      --   {- If there's a message on the queue, pop it off and perform it in
-      --      some manner.
-      --   -}
-      --   processCommands textures shouldExit nodeTree msgQIn msgQOut stateRef
-
-      --   renderNoFB textures nodeTree stateRef uniformVals textureQueue screenShader vao window
-
-      -- else do
-
-      --   processInput window monitor videoMode isFullscreen
-      --   processCommands textures shouldExit nodeTree msgQIn msgQOut stateRef
-
-      --   iter1 <- readIORef iter1Ref
-      --   if iter1 then do
-      --     -- write to fb', read texColBuf, write to texColBuf'
-      --     renderFB fb' texColBuf texColBuf'
-      --       screenShader textures nodeTree stateRef uniformVals textureQueue vao window
-      --     writeIORef iter1Ref False
-      --   else do
-      --     -- write to fb, read texColBuf', write to texColBuf
-      --     renderFB fb texColBuf' texColBuf
-      --       screenShader textures nodeTree stateRef uniformVals textureQueue vao window
-      --     writeIORef iter1Ref True
       else do
+        -- windowState <- readIORef stateRef
         renderState <- readIORef renderStateRef
         processInput window monitor videoMode isFullscreen
+        runRIO initWindowState applyUpdates
         runRIO renderState processCommands
-        renderState' <- runRIO renderState renderNoFB
+        renderState' <- runRIO renderState render
         writeIORef renderStateRef renderState'
 
     putStrLn $ "*** Info: Window "+|winID|+" - Killing sub socket thread"
@@ -133,9 +121,10 @@ withWindow width height title fn = liftIO $ do
     then do
       putStrLn "*** Error: couldn't initialise GLFW context"
     else do
-      GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 4
+      GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 3
       GLFW.windowHint $ GLFW.WindowHint'ContextVersionMinor 3
       GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
+      GLFW.windowHint $ GLFW.WindowHint'RefreshRate $ Just 5
       -- GLFW.windowHint $ GLFW.WindowHint'RefreshRate $ Just 240
 
       window <- GLFW.createWindow width height ("scsynth-video '" ++ title ++ "'") Nothing Nothing
@@ -157,23 +146,28 @@ withWindow width height title fn = liftIO $ do
 
 
 
-closeWindow :: WindowID -> TVar [Texture] -> IORef Bool -> IO ()
-closeWindow winID textures shouldExit = do
-  textures' <- readTVarIO textures
-  forM_ textures' $ freeTexture winID
-  atomically $ modifyTVar' textures (\_ -> [])
-  modifyIORef' shouldExit (\_-> True)
+closeWindow :: RIO WindowState ()
+closeWindow = ask >>= \env -> liftIO $ do
+  images  <- readTVarIO $ wsImages  env
+  videos  <- readTVarIO $ wsVideos  env
+  players <- readTVarIO $ wsPlayers env
+
+  forM_ (IntMap.toList images) $ GL.deleteObjectName . iTexObj . snd
+  forM_ (IntMap.toList videos) $ freeVideoResources . snd
+  cleanupPlayers players
+
+  modifyIORef' (wsShouldExit env) (\_-> True)
+  where
+    cleanupPlayers players =
+      let basicPlayers = Map.toList players
+                       |> filter (\(_, p) -> isPlayVid p)
+                       |> map (\(_, PlayVid bp) -> bp)
+      in  forM_ basicPlayers $ \bp -> case bpOnDiskPlaybackTools bp of
+                                        Nothing  -> return ()
+                                        Just pts -> odptCleanupFFmpeg pts
 
 
 
--- processCommands :: TVar [Texture]
---                 -> IORef Bool
---                 -> IORef (IntMap Node)
---                 -> TBQueue ExternalMsg
---                 -> TBQueue Msg
---                 -> IORef WindowState
---                 -> IO ()
--- processCommands textures shouldExit nodeTree msgQIn msgQOut stateRef = do
 processCommands :: RIO RenderState ()
 processCommands = do
   env <- ask >>= readIORef.rsWindowState
@@ -186,84 +180,92 @@ processCommands = do
   where
     handleMsg :: ExternalMsg -> RIO RenderState ()
     handleMsg msg = ask >>= \rs -> (readIORef.rsWindowState) rs >>= \env -> liftIO $ case msg of
-      GLWindowFree winID -> closeWindow winID (wsTextures env) (wsShouldExit env)
+      GLWindowFree _winID -> runRIO env closeWindow
 
-      GLVideoNew vidID vPath vPlaybackRate vShouldLoop winID -> do
-        textures' <- readTVarIO $ wsTextures env
+      GLVideoNew vidID vPath _winID -> liftIO $ do
+        videos  <- readTVarIO $ wsVideos env
+        players <- readTVarIO $ wsPlayers env
 
-        -- delete any existing videos with this ID
-        let matchingTextures = filterVideoTextures (\t -> texID t == vidID) textures'
-        if length matchingTextures > 0 then do
-          atomically $ modifyTVar' (wsTextures env) $ dropVideoTexture vidID
-          forM_ matchingTextures $ freeTexture winID
-        else
-          return ()
+        -- ensure any BasicPlayback players have their FFmpeg cleanup run
+        -- and replace the playbackTools and startTime with Nothing
+        players' <- findPlayersByVidID vidID players |> resetPlayers
 
-        tex <- newVideoTexture vidID vPath vPlaybackRate vShouldLoop
-        case tex of
-          Left errorStr -> putStrLn $ "*** Error: "+|errorStr|+""
-          Right texture -> atomically $ modifyTVar' (wsTextures env) $ \ts -> texture : ts
+        case IntMap.lookup vidID videos of
+          Just v  -> freeVideoResources v
+          Nothing -> return ()
 
+        let video = OnDiskVid $ VideoFile { vID = vidID, vFilePath = vPath }
 
-      GLVideoRead vidID vPath vPlaybackRate vShouldLoop winID -> do
-        textures' <- readTVarIO (wsTextures env)
-
-        -- delete any existing videos with this ID
-        let matchingTextures = filterVideoTextures (\t -> texID t == vidID) textures'
-        if length matchingTextures > 0 then do
-          atomically $ modifyTVar' (wsTextures env) $ dropVideoTexture vidID
-          forM_ matchingTextures $ freeTexture winID
-        else
-          return ()
-
-        tex <- newLoadedVideo vidID vPath vPlaybackRate vShouldLoop
-        case tex of
-          Left errorStr -> putStrLn $ "*** Error: "+|errorStr|+""
-          Right texture -> do
-            putStrLn $ "*** Info: adding new loaded video texture - ID = " ++ (show $ texID texture)
-            atomically $ modifyTVar' (wsTextures env) $ \ts -> texture : ts
+        atomically $ writeTVar (wsPlayers env) players'
+        atomically $ modifyTVar' (wsVideos env) $ IntMap.insert vidID video
 
 
-      GLVideoFree vidID winID -> do
-        textures' <- readTVarIO (wsTextures env)
-        let matchingTextures = filterVideoTextures (\t -> texID t == vidID) textures'
+      GLVideoRead vidID vPath _winID -> liftIO $ do
+        videos  <- readTVarIO $ wsVideos env
+        players <- readTVarIO $ wsPlayers env
 
-        if length matchingTextures > 0 then do
-          atomically $ modifyTVar' (wsTextures env) $ dropVideoTexture vidID
-          forM_ matchingTextures $ freeTexture winID
-        else
-          return ()
+        -- ensure any BasicPlayback players have their FFmpeg cleanup run
+        -- and replace the playbackTools and startTime with Nothing
+        players' <- findPlayersByVidID vidID players |> resetPlayers
+
+        case IntMap.lookup vidID videos of
+          Just v  -> freeVideoResources v
+          Nothing -> return ()
+
+        putStrLn $ "*** Info: reading video into memory with ID "+|vidID|+" ("+|vPath|+")"
+
+        -- TODO: check for sufficient available memory
+
+        video <- loadVideo vidID vPath
+
+        putStrLn $ "*** Info: finished reading video "+|vidID|+" into memory"
+
+        atomically $ writeTVar (wsPlayers env) players'
+        atomically $ modifyTVar' (wsVideos env) $ IntMap.insert vidID video
 
 
-      GLImageNew imgID iPath _winID -> do
-        textures' <- readTVarIO (wsTextures env)
+      GLVideoFree vidID _winID -> liftIO $ do
+        videos  <- readTVarIO $ wsVideos env
+        players <- readTVarIO $ wsPlayers env
 
-        let matchingTextures = filterImageTextures (\t -> iID t == imgID) textures'
-        if length matchingTextures > 0 then
-          atomically $ modifyTVar' (wsTextures env) $ dropImageTexture imgID
-        else
-          return ()
+        case IntMap.lookup vidID videos of
+          Just v  -> freeVideoResources v
+          Nothing -> return ()
+
+        let videos' = IntMap.delete vidID videos
+        players' <- findPlayersByVidID vidID players |> deletePlayers
+
+        atomically $ writeTVar (wsVideos env) videos'
+        atomically $ writeTVar (wsPlayers env) players'
+
+
+      GLImageNew imgID iPath _winID -> liftIO $ do
+        images <- readTVarIO (wsImages env)
+
+        case IntMap.lookup imgID images of
+          Just image -> GL.deleteObjectName $ iTexObj image
+          Nothing    -> return ()
 
         tex <- newImageTexture imgID iPath
         case tex of
           Left errorStr -> putStrLn $ "*** Error: "+|errorStr|+""
-          Right texture -> atomically $ modifyTVar' (wsTextures env) $ \ts -> texture : ts
+          Right image -> atomically $ modifyTVar' (wsImages env) $ IntMap.insert imgID image
 
 
-      GLImageFree imgID _winID -> do
-        textures' <- readTVarIO (wsTextures env)
-        let matchingTextures = filterImageTextures (\t -> iID t == imgID) textures'
+      GLImageFree imgID _winID -> liftIO $ do
+        images <- readTVarIO (wsImages env)
 
-        if length matchingTextures > 0 then
-          atomically $ modifyTVar' (wsTextures env) $ dropImageTexture imgID
-        else
-          return ()
+        case IntMap.lookup imgID images of
+          Just image -> GL.deleteObjectName $ iTexObj image
+          Nothing    -> return ()
+
+        atomically $ modifyTVar' (wsImages env) $ IntMap.delete imgID
 
 
       {- Add the received graph to the node tree and generate new shader program
          from that.
       -}
-      GraphNew gID gUnits -> do
+      GraphNew gID gUnits -> liftIO $ do
         let glUGenNames = map shaderName ugenShaderFns
             glUnits = filter (\u -> elem (scUnitName u) glUGenNames) gUnits
 
@@ -279,32 +281,56 @@ processCommands = do
       {- Delete the graph from the node tree and generate a new shader program
          from the updated node tree
       -}
-      GraphFree gID -> do
+      GraphFree gID -> liftIO $ do
         modifyIORef (wsNodeTree env) $ \nt -> IntMap.delete gID nt
+        players <- readTVarIO $ wsPlayers env
 
-        {- TODO: if the node tree is empty, insert a 'blank' shader program.
-        -}
+        players' <- findPlayersByGphID gID players |> deletePlayers
 
         {- TODO: delete the framebuffer objects associated with the graph being
                  freed. glDeleteFramebuffers.
                  also clear/delete the associated textures
         -}
 
-        atomically $ modifyTVar' (wsTextures env) $ map $ \tex ->
-          case tex of
-            Vid texture ->
-              let newAssigns = filter (\(gID',_,_) -> gID' /= gID) (assignments texture)
-              in  if length newAssigns == 0 then
-                    updateStartTime Nothing (updateAssignments [] tex)
-                  else (updateAssignments [] tex)
-            Img texture ->
-              let newAssigns = filter (\(gID',_,_) -> gID' /= gID) (assignments texture)
-              in  updateAssignments newAssigns tex
-            LVd texture ->
-              let newAssigns = filter (\(gID',_,_) -> gID' /= gID) (assignments texture)
-              in  if length newAssigns == 0 then
-                    updateStartTime Nothing (updateAssignments [] tex)
-                  else (updateAssignments [] tex)
+        atomically $ writeTVar (wsPlayers env) players'
+
+
+      DelBufNew bID bLen _winID -> do
+        delBufs <- readTVarIO $ wsDelBufs env
+
+        case IntMap.lookup bID delBufs of
+          Nothing -> return ()
+          Just (DelBuf _ _ buses) -> do
+            putStrLn $ "*** Info: DelBufNew - freeing previous delay buffer with id = "+|bID|+""
+            forM_ buses $ \(Bus fbo tObj) -> do
+              GL.deleteObjectName fbo
+              GL.deleteObjectName tObj
+
+        let w = wsWidth env
+            h = wsHeight env
+
+        putStrLn $ "*** Info: DelBufNew - allocating new delay buffer, id = "+|bID|+", length = "+|bLen|+""
+
+        assignmentTVar <- newTVarIO []
+        delBuf <- Seq.replicateM (bLen + 1) (setupFramebuffer w h >>= return . (uncurry Bus))
+                  >>= return . (DelBuf bID assignmentTVar)
+
+        atomically $ modifyTVar' (wsDelBufs env) $ IntMap.insert bID delBuf
+
+
+      DelBufFree bID _winID -> do
+        delBufs <- readTVarIO $ wsDelBufs env
+
+        case IntMap.lookup bID delBufs of
+          Nothing -> return ()
+          Just (DelBuf _ _ buses) -> do
+            putStrLn $ "*** Info: DelBufFree - freeing delay buffer with id = "+|bID|+""
+
+            forM_ buses $ \(Bus fbo tObj) -> do
+              GL.deleteObjectName fbo
+              GL.deleteObjectName tObj
+
+            atomically $ modifyTVar' (wsDelBufs env) $ IntMap.delete bID
 
 
       InVidDur _reqID _vidID _winID -> undefined -- do
@@ -328,27 +354,156 @@ processCommands = do
 
 
 
-filterVideoTextures :: (Texture -> Bool) -> [Texture] -> [Texture]
-filterVideoTextures eqFn textures = flip filter textures $ \tex ->
-  case tex of Vid texture   -> eqFn $ Vid texture
-              LVd texture   -> eqFn $ LVd texture
-              _imageTexture -> False
+applyUpdates :: RIO WindowState ()
+applyUpdates = do
+  env <- ask
+  updates <- atomically $ STM.flushTBQueue $ wsUpdateQueue env
+  let updates' = List.nub updates
+  -- liftIO $ putStrLn $ "*** Debug: applying "+||length updates'||+" updates"
+  forM_ updates' $ \update -> liftIO $ do
+    case update of
+      WUDelBufRd bufID assignment -> do
+        delBufs <- readTVarIO $ wsDelBufs env
+
+        case IntMap.lookup bufID delBufs of
+          Nothing -> return () -- putStrLn $ "\n*** Debug: WUDelBufRd - no delay buffer found "+|bufID|+"" -- return ()
+          Just db -> do
+            assignments <- readTVarIO $ dbAssignments db
+            let assignmentExists = elem assignment assignments
+
+            if not assignmentExists then
+              atomically $ modifyTVar' (dbAssignments db) $ (:) assignment
+            else
+              return () -- putStrLn $ "\n*** Debug: WUDelBufRd - doing nothing because assignment exists" -- return ()
 
 
-filterImageTextures :: (ImageTexture -> Bool) -> [Texture] -> [Texture]
-filterImageTextures eqFn textures = flip filter textures $ \tex ->
-  case tex of Img texture   -> eqFn texture
-              _videoTexture -> False
+      WUDelBufWr nID bufID wireID -> do
+        delBufs <- readTVarIO $ wsDelBufs env
+        buses   <- readTVarIO $ wsBuses env
+
+        case IntMap.lookup bufID delBufs of
+          Nothing -> return () -- putStrLn $ "\n*** Debug: WUDelBufWr - no delay buffer found "+|bufID|+"" -- return ()
+          Just db -> do
+            let hd Seq.:<| _ = dbBuses db
+            case Map.lookup (nID, wireID) buses of
+              Nothing  -> return () -- putStrLn $ "\n*** Debug: WUDelBufWr - no wire/bus found "+||(nID, wireID)||+"" -- return ()
+              Just bus -> if hd == bus then return () else
+                atomically $ modifyTVar' (wsBuses env) $ Map.insert (nID, wireID) hd
 
 
-dropVideoTexture :: Int -> [Texture] -> [Texture]
-dropVideoTexture tID textures = flip filter textures $ \tex ->
-  case tex of Vid texture   -> tID /= texID texture
-              -- LVd texture   -> tID /= texID texture
-              _imageTexture -> True
+      WUAssignImage imgID assignment -> do
+        images <- readTVarIO $ wsImages env
+        case IntMap.lookup imgID images of
+          Nothing  -> return ()
+          Just img -> do
+            let assignments = (iAssignments img)
+                assignmentExists = elem assignment assignments
+
+            if not assignmentExists then
+              atomically $ modifyTVar' (wsImages env) $
+                IntMap.insert imgID (img { iAssignments = assignment : assignments })
+            else
+              return ()
 
 
-dropImageTexture :: Int -> [Texture] -> [Texture]
-dropImageTexture tID textures = flip filter textures $ \tex ->
-  case tex of Img texture   -> tID /= texID texture
-              _videoTexture -> True
+      WUPlayVid vidID assignment rate loop -> do
+        players <- readTVarIO $ wsPlayers env
+        videos  <- readTVarIO $ wsVideos env
+
+        -- Despite the crazy nesting this isn't complicated. is there a better way?
+        case IntMap.lookup vidID videos of
+          Nothing -> return ()
+          Just v  ->
+            case Map.lookup assignment players of
+              Nothing ->
+                addBasicPlayer (wsPlayers env) v assignment rate loop
+              Just (VidRd _) ->
+                addBasicPlayer (wsPlayers env) v assignment rate loop
+              Just (PlayVid bp) -> if getVideoID bp == vidID
+                then do
+                  atomically $ writeTVar (bpRate bp) rate
+                  atomically $ writeTVar (bpLoop bp) loop
+                else do
+                  addBasicPlayer (wsPlayers env) v assignment rate loop
+                  -- free resources associated with old player
+                  case bpOnDiskPlaybackTools bp of
+                    Nothing  -> return ()
+                    Just pts -> odptCleanupFFmpeg pts
+
+
+      WUVidRd vidID assignment headPos -> do
+        players <- readTVarIO $ wsPlayers env
+        videos  <- readTVarIO $ wsVideos env
+
+        case IntMap.lookup vidID videos of
+          Nothing -> return ()
+          Just v  ->
+            case Map.lookup assignment players of
+              Nothing ->
+                addPlaybackHead (wsPlayers env) v assignment headPos
+              Just (VidRd ph) ->
+                atomically $ writeTVar (phHeadPos ph) headPos
+              Just (PlayVid basicPlayer) -> do
+                addPlaybackHead (wsPlayers env) v assignment headPos
+                -- free resources associated with old player
+                case bpOnDiskPlaybackTools basicPlayer of
+                  Nothing  -> return ()
+                  Just pts -> odptCleanupFFmpeg pts
+  where
+    addBasicPlayer players video assignment vRate vLoop = do
+      rate <- newTVarIO vRate
+      loop <- newTVarIO vLoop
+      let player = PlayVid $ BasicPlayer { bpVideo = video
+                                         , bpAssignment = assignment
+                                         , bpRate = rate
+                                         , bpLoop = loop
+                                         , bpStartTime = Nothing
+                                         , bpOnDiskPlaybackTools = Nothing
+                                         , bpInMemPlaybackTools = Nothing
+                                         }
+      atomically $ modifyTVar' players $ Map.insert assignment player
+
+    addPlaybackHead players video assignment headPos = do
+      headPosTVar <- newTVarIO headPos
+      let player = VidRd $ PlaybackHead { phVideo = video
+                                        , phAssignment = assignment
+                                        , phHeadPos = headPosTVar
+                                        }
+      atomically $ modifyTVar' players $ Map.insert assignment player
+
+
+
+
+findPlayersByVidID :: Int -> Map Assignment Player -> (Map Assignment Player, [(Assignment, Player)])
+findPlayersByVidID videoID players =
+  (players, filter (\(_k, v) -> videoID == getVideoID v) $ Map.toList players)
+
+
+findPlayersByGphID :: Int -> Map Assignment Player -> (Map Assignment Player, [(Assignment, Player)])
+findPlayersByGphID graphID players =
+  (players, filter (\((gID, _, _), _v) -> gID == graphID) $ Map.toList players)
+
+
+resetPlayers :: (Map Assignment Player, [(Assignment, Player)]) -> IO (Map Assignment Player)
+resetPlayers (playersMap, playersToReset) = do
+  let basicPlayers = playersToReset |> filter (\(_, p) -> isPlayVid p) |> map (\(_, PlayVid bp) -> bp)
+  freedBasicPlayers <- forM basicPlayers $ \bp ->
+    case bpOnDiskPlaybackTools bp of
+      Nothing  -> return $ bp { bpStartTime = Nothing, bpInMemPlaybackTools = Nothing }
+      Just pts -> do odptCleanupFFmpeg pts
+                     return $ bp { bpOnDiskPlaybackTools = Nothing
+                                 , bpInMemPlaybackTools = Nothing
+                                 , bpStartTime = Nothing
+                                 }
+  return $ foldr (\bp m -> Map.insert (bpAssignment bp) (PlayVid bp) m) playersMap freedBasicPlayers
+
+
+deletePlayers :: (Map Assignment Player, [(Assignment, Player)]) -> IO (Map Assignment Player)
+deletePlayers (playersMap, playersToDelete) = do
+  let basicPlayers = playersToDelete |> filter (\(_, p) -> isPlayVid p) |> map (\(_, PlayVid bp) -> bp)
+  forM_ basicPlayers $ \bp -> case bpOnDiskPlaybackTools bp of
+                                Nothing  -> return ()
+                                Just pts -> odptCleanupFFmpeg pts
+  return $ playersToDelete
+         |> map (\(_, p) -> p)
+         |> foldr (\p m -> Map.delete (playerAssignment p) m) playersMap

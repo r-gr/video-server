@@ -1,58 +1,16 @@
-module Types ( Bus(..)
-             , CmdLineOpts(..)
-             , FragShader(..)
-             , Graph
-             , InBus(..)
-             , Link(..)
-             , NodeID
-             , Node(..)
-             , OutBus(..)
-             , RenderState(..)
-             , SCGraph
-             , SCUnit(..)
-             , ShaderProgram(..)
-             , SubGraph(..)
-             , Unit(..)
-             , UnitID
-             , Window(..)
-             , WindowID
-             , WindowState(..)
-             , WireID
-
-             -- MSG
-             , UnitData(..)
-             , Msg(..)
-             , InternalMsg(..)
-             , ExternalMsg(..)
-             , Response(..)
-             , TextureUpdate(..)
-
-             -- TEXTURE
-             , Texture(..)
-             , TextureClass(..)
-             , ImageTexture(..)
-             , VideoTexture(..)
-             , LoadedVideo(..)
-             , FrameGrabber
-
-             , containsVideoUGen
-             , partitionOn
-             , linkID
-             , isWire
-             , isLBus
-             ) where
+module Types where
 
 
 import RIO
+import RIO.Seq (Seq)
 
 import Codec.Picture
-import Data.ByteString (ByteString)
-import Data.IntMap (IntMap)
-import Data.Map (Map)
 import Data.Aeson
-import qualified Data.Vector as V
+-- import Fmt
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
+import System.IO.Unsafe (unsafePerformIO)
+import System.ZMQ4 (Socket, Sub)
 
 
 data CmdLineOpts = CmdLineOpts
@@ -88,10 +46,23 @@ data Window = Window { wNodes  :: IntMap Node
 -- data Input  = InGlobal  Int | InLocal  Int
 -- data Output = OutGlobal Int | OutLocal Int
 
-data InBus  = InBus WireID Bus deriving (Show)
-data OutBus = OutBus WireID Bus deriving (Show)
+data InBus  = InBus WireID Bus deriving (Eq, Show)
+data OutBus = OutBus WireID Bus deriving (Eq, Show)
 
-data Bus = Bus GL.FramebufferObject GL.TextureObject deriving (Show)
+data Bus = Bus GL.FramebufferObject GL.TextureObject deriving (Eq, Show)
+
+data DelBuf = DelBuf
+  { dbID          :: Int
+  , dbAssignments :: TVar [Assignment]
+  , dbBuses       :: Seq Bus
+  }
+
+instance Show DelBuf where
+  show (DelBuf bID bAs bBs) =
+    "DelBuf {delBufID = "           ++ (show bID)
+        ++ ", delBufAssignments = " ++ (show $ unsafePerformIO (readTVarIO bAs))
+        ++ ", delBufBuses = "       ++ (show bBs)
+        ++ "}"
 
 type Graph = [Unit]
 data Unit = Unit { unitName        :: Text
@@ -108,7 +79,7 @@ data Link = Wire WireID UnitID [UnitID]
 
 data SubGraph   = SubGraph   Graph [Link] (Maybe Link) deriving (Show)
 data FragShader = FragShader Text  [Link] (Maybe Link) deriving (Show)
-data ShaderProgram = ShaderProgram GL.Program [InBus] OutBus
+data ShaderProgram = ShaderProgram GL.Program [WireID] WireID deriving (Eq)
 
 
 
@@ -116,18 +87,24 @@ data ShaderProgram = ShaderProgram GL.Program [InBus] OutBus
 {- WINDOW -}
 
 
-data WindowState =
-  WindowState { wsWindow :: GLFW.Window
-              , wsWidth  :: Int -- TODO?: make the width and height IORefs?
-              , wsHeight :: Int
-              , wsShouldExit :: IORef Bool
-              , wsMsgQIn :: TBQueue ExternalMsg
-              , wsMsgQOut :: TBQueue Msg
-              , wsTextures :: TVar [Texture] -- TODO: better data structure
-              , wsNodeTree :: IORef (IntMap Node)
-              , wsUniformVals :: TBQueue UnitData
-              , wsTextureUpdates :: TBQueue TextureUpdate
-              }
+data WindowState = WindowState
+  { wsWindow :: GLFW.Window
+  , wsWindowID :: WindowID
+  , wsWidth  :: Int -- TODO?: make the width and height IORefs?
+  , wsHeight :: Int
+  , wsShouldExit :: IORef Bool
+  , wsMsgQIn :: TBQueue ExternalMsg
+  , wsMsgQOut :: TBQueue Msg
+  , wsSubSocket :: Socket Sub
+  , wsImages :: TVar (IntMap ImageTexture)
+  , wsVideos :: TVar (IntMap Video)
+  , wsPlayers :: TVar (Map Assignment Player)
+  , wsDelBufs :: TVar (IntMap DelBuf)
+  , wsBuses :: TVar (Map (NodeID, WireID) Bus)
+  , wsNodeTree :: IORef (IntMap Node)
+  , wsUniformVals :: TBQueue UnitData
+  , wsUpdateQueue :: TBQueue WindowUpdate
+  }
 
 
 
@@ -139,14 +116,20 @@ data RenderState = RenderState
   { rsWindowState :: IORef WindowState
   , rsScreenShader :: GL.Program
   , rsVAO :: GL.VertexArrayObject
-  , rsBuses :: IORef (Map (NodeID, WireID) Bus)
+  -- , rsBuses :: IORef (Map (NodeID, WireID) Bus)
   , rsDefaultOutBus :: Bus
   -- TODO: sort out the feedback implementation so this isn't required
-  , rsIter1 :: IORef Bool
-  , rsTB1 :: GL.TextureObject
-  , rsFB1 :: GL.FramebufferObject
-  , rsTB2 :: GL.TextureObject
-  , rsFB2 :: GL.FramebufferObject
+  -- , rsIter1 :: IORef Bool
+  -- , rsTB1 :: GL.TextureObject
+  -- , rsFB1 :: GL.FramebufferObject
+  -- , rsTB2 :: GL.TextureObject
+  -- , rsFB2 :: GL.FramebufferObject
+  , rsMaxTexUnits :: GL.GLsizei
+  }
+
+data ShaderState = ShaderState
+  { ssTextureUnits :: IORef [GL.TextureUnit]
+  , ssShaderProgram :: GL.Program
   }
 
 
@@ -168,14 +151,10 @@ data ExternalMsg
   | GLWindowFree { windowID :: WindowID }
   | GLVideoNew  { videoID   :: Int
                 , videoPath :: FilePath
-                , videoRate :: Float
-                , videoLoop :: Bool
                 , windowID  :: WindowID
                 }
   | GLVideoRead { videoID   :: Int
                 , videoPath :: FilePath
-                , videoRate :: Float
-                , videoLoop :: Bool
                 , windowID  :: WindowID
                 }
   | GLVideoFree { videoID  :: Int
@@ -200,6 +179,13 @@ data ExternalMsg
                    , videoID  :: Int
                    , windowID :: WindowID
                    }
+  | DelBufNew  { bufferID  :: Int
+               , bufferLen :: Int
+               , windowID  :: WindowID
+               }
+  | DelBufFree { bufferID :: Int
+               , windowID :: WindowID
+               }
   deriving (Generic, Show)
 data InternalMsg
   = SendResponse { responseMsg :: Response }
@@ -230,116 +216,119 @@ data UnitData = UnitData
   , uDataValue   :: Float
   } deriving (Show)
 
-data TextureUpdate
-  = AssignVideo (NodeID, UnitID, Int) Int
-  | AssignImage (NodeID, UnitID, Int) Int
-  deriving (Show)
+data WindowUpdate
+  = WUDelBufRd Int Assignment
+  | WUDelBufWr NodeID Int WireID
+  | WUAssignImage Int Assignment
+  | WUPlayVid Int Assignment Double Bool
+  | WUVidRd Int Assignment Float
+  deriving (Eq, Show)
 
 
+
+
+{- VIDEOS + PLAYBACK -}
+
+
+data Video = OnDiskVid VideoFile
+           | InMemVid  VideoFile VideoData
+           -- | VideoBuffer
+
+isOnDiskVid :: Video -> Bool
+isOnDiskVid (OnDiskVid _) = True
+isOnDiskVid _ = False
+
+isInMemVid :: Video -> Bool
+isInMemVid (InMemVid _ _) = True
+isInMemVid _ = False
+
+class HasVideoID t where
+  getVideoID :: t -> Int
+
+instance HasVideoID Video where
+  getVideoID (OnDiskVid v)  = vID v
+  getVideoID (InMemVid v _) = vID v
+
+instance HasVideoID Player where
+  getVideoID (PlayVid bp) = getVideoID.bpVideo $ bp
+  getVideoID (VidRd ph)   = getVideoID.phVideo $ ph
+
+instance HasVideoID BasicPlayer where
+  getVideoID bp = getVideoID.bpVideo $ bp
+
+instance HasVideoID PlaybackHead where
+  getVideoID ph = getVideoID.phVideo $ ph
+
+data VideoFile = VideoFile
+  { vID :: Int
+  , vFilePath :: FilePath
+  }
+data VideoData = VideoData
+  { vFrames    :: IORef (Vector (GL.TextureObject, Double))
+  , vNumFrames :: Int
+  }
+
+data Player = PlayVid BasicPlayer
+            | VidRd   PlaybackHead
+
+isPlayVid :: Player -> Bool
+isPlayVid (PlayVid _) = True
+isPlayVid _ = False
+
+isVidRd :: Player -> Bool
+isVidRd (VidRd _) = True
+isVidRd _ = False
+
+
+data BasicPlayer = BasicPlayer
+  { bpVideo               :: Video
+  , bpAssignment          :: Assignment
+  , bpRate                :: TVar Double
+  , bpLoop                :: TVar Bool
+  , bpStartTime           :: Maybe Double
+  , bpOnDiskPlaybackTools :: Maybe OnDiskPlaybackTools
+  , bpInMemPlaybackTools  :: Maybe InMemPlaybackTools
+  }
+
+-- TODO: This is pretty gross at the moment. Restructure more nicely, use
+--       shorter field and type names etc.
+
+data OnDiskPlaybackTools = OnDiskPlaybackTools
+  { odptNextFrame     :: FrameGrabber PixelRGBA8
+  , odptSkipFrame     :: IO Bool
+  , odptCleanupFFmpeg :: IO ()
+  , odptFps           :: Double
+  , odptTextureObject :: GL.TextureObject
+  , odptCurrentFrame  :: Int
+  }
+
+data InMemPlaybackTools = InMemPlaybackTools
+  { imptFps           :: Double
+  , imptCurrentFrame  :: Int
+  }
+
+data PlaybackHead = PlaybackHead
+  { phVideo :: Video
+  , phAssignment :: Assignment
+  , phHeadPos :: TVar Float
+  }
+
+playerAssignment :: Player -> Assignment
+playerAssignment = \case PlayVid bp -> bpAssignment bp
+                         VidRd   ph -> phAssignment ph
 
 
 {- TEXTURES -}
 
 
 type FrameGrabber p = IO (Maybe (Image p, Double))
-class TextureClass t where
-  texObj      :: t -> GL.TextureObject
-  texUnit     :: t -> GL.TextureUnit
-  assignments :: t -> [(NodeID, UnitID, Int)]
-  texID       :: t -> Int
-data Texture = Vid VideoTexture | Img ImageTexture | LVd LoadedVideo
-data VideoTexture
-  = VideoTexture { vTexObj        :: GL.TextureObject
-                 , vTexUnit       :: GL.TextureUnit
-                 , vAssignments   :: [(NodeID, UnitID, Int)]
-                 , vID            :: Int
-                 , vLoop          :: Bool
-                 , vFilePath      :: FilePath
-                 , vNextFrame     :: (FrameGrabber PixelRGB8)
-                 , vCleanupFFmpeg :: (IO ())
-                 , vStartTime     :: Maybe Double
-                 , vCurrentFrame  :: Int
-                 , vFps           :: Maybe Double
-                 , vRate          :: Double
-                 }
-data LoadedVideo
-  = LoadedVideo { lvTexUnit       :: GL.TextureUnit
-                , lvAssignments   :: [(NodeID, UnitID, Int)]
-                , lvID            :: Int
-                , lvLoop          :: Bool
-                , lvFrames        :: V.Vector (GL.TextureObject, Double)
-                , lvNumFrames     :: Int
-                , lvStartTime     :: Maybe Double
-                , lvCurrentFrame  :: Int
-                , lvFps           :: Maybe Double
-                , lvRate          :: Double
-                }
+type Assignment = (NodeID, UnitID, Int)
+
 data ImageTexture
   = ImageTexture { iTexObj      :: GL.TextureObject
-                 , iTexUnit     :: GL.TextureUnit
                  , iAssignments :: [(NodeID, UnitID, Int)]
                  , iID          :: Int
-                 , iImageRGB8   :: (Image PixelRGB8)
-                 , iIsBound     :: Bool
                  }
-
-instance Eq Texture where
-  Vid _ == Img _ = False
-  Img _ == Vid _ = False
-  LVd _ == Vid _ = False
-  Vid _ == LVd _ = False
-  LVd _ == Img _ = False
-  Img _ == LVd _ = False
-  Vid v1 == Vid v2 = v1 == v2
-  Img i1 == Img i2 = i1 == i2
-  LVd v1 == LVd v2 = v1 == v2
-
-instance Eq VideoTexture where
-  VideoTexture tObj1 tUnit1 _ _ _ _ _ _ _ _ _ _ == VideoTexture tObj2 tUnit2 _ _ _ _ _ _ _ _ _ _ =
-    tObj1 == tObj2 && tUnit1 == tUnit2
-
-instance Eq ImageTexture where
-  ImageTexture tObj1 tUnit1 _ _ _ _ == ImageTexture tObj2 tUnit2 _ _ _ _ =
-    tObj1 == tObj2 && tUnit1 == tUnit2
-
-instance Eq LoadedVideo where
-  LoadedVideo tUnit1 _ vID1 _ _ _ _ _ _ _ == LoadedVideo tUnit2 _ vID2 _ _ _ _ _ _ _ =
-    tUnit1 == tUnit2 && vID1 == vID2
-
-instance TextureClass VideoTexture where
-  texObj t = vTexObj t
-  texUnit t = vTexUnit t
-  assignments t = vAssignments t
-  texID t = vID t
-
-instance TextureClass ImageTexture where
-  texObj t = iTexObj t
-  texUnit t = iTexUnit t
-  assignments t = iAssignments t
-  texID t = iID t
-
-instance TextureClass LoadedVideo where
-  texObj t = fst $ (lvFrames t) V.! (lvCurrentFrame t)
-  texUnit t = lvTexUnit t
-  assignments t = lvAssignments t
-  texID t = lvID t
-
-instance TextureClass Texture where
-  texObj (Vid t) = texObj t
-  texObj (Img t) = texObj t
-  texObj (LVd t) = texObj t
-  texUnit (Vid t) = texUnit t
-  texUnit (Img t) = texUnit t
-  texUnit (LVd t) = texUnit t
-  assignments (Vid t) = assignments t
-  assignments (Img t) = assignments t
-  assignments (LVd t) = assignments t
-  texID (Vid t) = texID t
-  texID (Img t) = texID t
-  texID (LVd t) = texID t
-
-
-
 
 
 
@@ -360,6 +349,7 @@ partitionOn uName =
     "Scale2"    -> Just [0]
     "ScaleXY"   -> Just [0]
     "Translate" -> Just [0]
+    "DelBufWr"  -> Just [0]
     -- "Tex2Thing" -> Just [0, 1]
     _ -> Nothing
 

@@ -1,24 +1,29 @@
-module Render (compile, renderNoFB, renderFB, setupRendering) where
+module Render (compile, render, setupRendering) where
 
 
+import Prelude (putStrLn)
 import RIO
 import qualified RIO.Text as Text
 import RIO.List.Partial (head)
+import qualified RIO.Map as Map
+import RIO.Partial (fromJust)
 
 import qualified Control.Concurrent.STM as STM
 import Data.Foldable (forM_)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
--- import Fmt
+import Fmt
 import Foreign.Ptr (nullPtr)
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
+import Text.Pretty.Simple (pPrint)
 
 import GLUtils
+import MyPrelude
+import Playback
 import Shader
-import Texture
 import Types
 
 
@@ -32,42 +37,30 @@ setupRendering wsRef = do
 
   GL.currentProgram $= Just initShaderProgram
 
-  iter1Ref <- newIORef True
-  initBuses <- newIORef Map.empty
-
   -- create a default output bus
   (defaultFbo, defaultTexOut) <- setupFramebuffer (wsWidth ws) (wsHeight ws)
   let defaultBus = Bus defaultFbo defaultTexOut
 
-  -- create framebuffers to allow feedback textures
-  (fb, texColBuf)   <- setupFramebuffer (wsWidth ws) (wsHeight ws)
-  (fb', texColBuf') <- setupFramebuffer (wsWidth ws) (wsHeight ws)
   GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
+
+  maxTexUnits <- GL.maxTextureImageUnits
 
   return $ RenderState { rsWindowState = wsRef
                        , rsScreenShader = screenShader
                        , rsVAO = vao
-                       , rsBuses = initBuses
                        , rsDefaultOutBus = defaultBus
-                       , rsIter1 = iter1Ref
-                       , rsTB1 = texColBuf
-                       , rsFB1 = fb
-                       , rsTB2 = texColBuf'
-                       , rsFB2 = fb'
+                       , rsMaxTexUnits = maxTexUnits
                        }
 
 
 
-renderNoFB :: RIO RenderState RenderState
-renderNoFB = ask >>= \env -> liftIO $ do
--- renderNoFB textures nodeTree stateRef uniformVals textureQueue ss vao window = do
+render :: RIO RenderState RenderState
+render = ask >>= \env -> liftIO $ do
   ws <- readIORef $ rsWindowState env
   {- Update texture and float uniforms.
   -}
   nodeTree' <- readIORef $ wsNodeTree ws
-
-  textureUpdates <- atomically $ STM.flushTBQueue $ wsTextureUpdates ws
-  forM_ textureUpdates $ applyTextureUpdate $ wsTextures ws
+  buses <- readTVarIO $ wsBuses ws
 
   uniforms <- atomically $ STM.flushTBQueue $ wsUniformVals ws
   let uniformUpdates = IntMap.fromListWith (++)
@@ -78,8 +71,25 @@ renderNoFB = ask >>= \env -> liftIO $ do
   GL.clearNamedFramebuffer outBusFbo
     $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
 
-  forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inBuses (OutBus _wireID (Bus out _))) -> do
+  forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inWires outWire) -> do
     GL.currentProgram $= Just shaderProgram
+
+    -- TODO?: it may be possible to use texture unit 0 here but since it is the
+    --        texture unit used for the final 'screen shader' rendering step, it
+    --        causes visual glitches. I'm not exactly sure what is going on
+    --        there right now and losing one possible texture unit is still a
+    --        big improvement over the previous implementation.
+    --        It might be possible to fix this by carefully working out how and
+    --        when texture objects are bound to the texture units for the shader
+    --        programs.
+    let texUnitMin = (fromIntegral $ length inWires) + 1
+        texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
+    textureUnits <- newIORef $ map GL.TextureUnit [texUnitMin..texUnitMax]
+
+    let shaderState = ShaderState { ssShaderProgram = shaderProgram
+                                  , ssTextureUnits  = textureUnits
+                                  }
+
     forM_ (fromMaybe [] $ IntMap.lookup nID uniformUpdates) $ \u -> do
       let gID   = uDataNodeID u
           uID   = uDataUnitID u
@@ -87,22 +97,45 @@ renderNoFB = ask >>= \env -> liftIO $ do
           name = uniformName gID uID input
 
       -- TODO: note - this attempts to set every uniform for the node in each
-      --       shader program. may be quite wasteful if a node is split into many
-      --       shader programs. it will also spit out debug output so should fix
-      --       this at some point.
-      setFloatUniform' shaderProgram name (uDataValue u)
+      --       shader program. may be quite wasteful if a node is split into
+      --       many shader programs.
+      --       Maybe a good solution is to store information about the graphs
+      --       and units in the shader program to allow a fast lookup by gID,
+      --       uID before attempting to set the uniform.
+      setFloatUniform shaderProgram name (uDataValue u)
+
+    images  <- readTVarIO $ wsImages  ws
+    players <- readTVarIO $ wsPlayers ws
+    delBufs <- readTVarIO $ wsDelBufs ws
 
     -- TODO: note - this attempts to set every texture in every shader program
     --       and silently fails for the cases that don't work. this is also
     --       wasteful and a better solution should be devised.
-    textures'  <- readTVarIO $ wsTextures ws
-    textures'' <- updateTextures shaderProgram (length inBuses) textures'
-    atomically $ modifyTVar' (wsTextures ws) $ \_ -> textures''
+    --       Again, the above possible solution of looking up if the gID and uID
+    --       are in the shader program would work.
+    runRIO shaderState $ forM_ (map snd . IntMap.toList $ images) displayImage
+    players' <- runRIO shaderState $ forM (Map.toList $ players) $ \(k, p) ->
+                  play p >>= \case Just p' -> return $ Just (k, p')
+                                   Nothing -> return Nothing
+    runRIO shaderState $ forM_ delBufs $ \db -> do
+      -- liftIO $ putStrLn $ "\n\n*** Debug: displaying delay buffer "+||db||+""
+      -- liftIO $ putStrLn (show db)
+      displayDelBuf db
+
+    atomically $ writeTVar (wsPlayers ws) $
+      players' |> filter (isJust) |> map (fromJust) |> Map.fromList
 
     -- bind input bus(es) to texture units
-    forM_ (zip [0..] inBuses) $ \(i, InBus wireID (Bus _ tObj)) ->
-      bindInputBus shaderProgram i wireID tObj
+    -- TODO?: as above, it might be possible to use texture unit 0 but will need
+    --        to figure out how that interacts with other texture unit
+    --        assignments to avoid the visual glitches.
+    forM_ (zip [1..] inWires) $ \(i, wireID) ->
+      let Bus _ tObj = buses Map.! (nID, wireID)
+      in  bindInputBus shaderProgram i wireID tObj
 
+    let b@(Bus out _) = if outWire == (-1) then rsDefaultOutBus env
+                                         else buses Map.! (nID, outWire)
+    -- putStrLn $ "*** Debug: rendering to wire "+|outWire|+", bus "+||b||+""
     GL.bindFramebuffer GL.Framebuffer $= out
     GL.clearNamedFramebuffer out
       $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
@@ -111,6 +144,12 @@ renderNoFB = ask >>= \env -> liftIO $ do
     GL.bindVertexArrayObject $= Just (rsVAO env)
     GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
 
+  -- rotate the frames in the delay buffers to move them along by one
+  atomically $ modifyTVar' (wsDelBufs ws) $ \dbs ->
+                 dbs
+                 |> IntMap.toList
+                 |> map (\(k, db) -> (k, db { dbBuses = rotate (dbBuses db) }))
+                 |> IntMap.fromList
 
   GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
   GL.clearNamedFramebuffer GL.defaultFramebufferObject
@@ -129,146 +168,16 @@ renderNoFB = ask >>= \env -> liftIO $ do
 
 
 
-renderFB :: RIO RenderState RenderState
-renderFB = ask >>= \env -> liftIO $ do
--- renderFB fb tb1 tb2 ss textures nodeTree stateRef uniformVals textureQueue vao window = do
-  ws    <- readIORef $ rsWindowState env
-  iter1 <- readIORef $ rsIter1 env
-
-  {- Update texture and float uniforms.
-  -}
-  nodeTree' <- readIORef $ wsNodeTree ws
-
-  textureUpdates <- atomically $ STM.flushTBQueue $ wsTextureUpdates ws
-  forM_ textureUpdates $ applyTextureUpdate $ wsTextures ws
-
-  uniforms <- atomically $ STM.flushTBQueue $ wsUniformVals ws
-  let uniformUpdates = IntMap.fromListWith (++)
-                     $ map (\unitData -> (uDataNodeID unitData, [unitData])) uniforms
-
-  forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inBuses (OutBus _wireID (Bus out _))) -> do
-    GL.currentProgram $= Just shaderProgram
-    forM_ (fromMaybe [] $ IntMap.lookup nID uniformUpdates) $ \u -> do
-      let gID   = uDataNodeID u
-          uID   = uDataUnitID u
-          input = uDataInput u
-          name = uniformName gID uID input
-
-      -- TODO: note - this attempts to set every uniform for the node in each
-      --       shader program. may be quite wasteful if a node is split into many
-      --       shader programs. it will also spit out debug output so should fix
-      --       this at some point.
-      setFloatUniform' shaderProgram name (uDataValue u)
-
-    -- TODO: note - this attempts to set every texture in every shader program
-    --       and silently fails for the cases that don't work. this is also
-    --       wasteful and a better solution should be devised.
-    textures'  <- readTVarIO $ wsTextures ws
-    textures'' <- updateTextures shaderProgram (length inBuses + 1) textures'
-    atomically $ modifyTVar' (wsTextures ws) $ \_ -> textures''
-
-    -- bind previous frame texture
-    -- TODO: only bind it in the subgraph which contains the GLPrevFrame UGen?
-    --       That seems to be an optimisation for a bad design though so probably
-    --       best to redesign how feedback works.
-    GL.activeTexture $= (GL.TextureUnit 0)
-    GL.textureBinding GL.Texture2D $= Just (if iter1 then rsTB2 env else rsTB1 env)
-
-    -- bind input bus(es) to texture units
-    forM_ (zip [0..] inBuses) $ \(i, InBus wireID (Bus _ tObj)) ->
-      bindInputBus shaderProgram i wireID tObj
-
-    GL.bindFramebuffer GL.Framebuffer $= out
-    GL.clearColor $= GL.Color4 0.0 0.0 0.0 1.0
-    GL.clear [GL.ColorBuffer]
-    GL.currentProgram $= Just shaderProgram
-    GL.bindVertexArrayObject $= Just (rsVAO env)
-    GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
-
-
-  let Bus _ textureObj = rsDefaultOutBus env
-
-  -- render to the background framebuffer
-  GL.bindFramebuffer GL.Framebuffer $= (if iter1 then rsFB1 else rsFB2) env
-  GL.clearColor $= GL.Color4 0.0 0.0 0.0 1.0
-  GL.clear [GL.ColorBuffer]
-
-  GL.currentProgram $= Just (rsScreenShader env)
-  GL.bindVertexArrayObject $= Just (rsVAO env)
-  GL.activeTexture $= (GL.TextureUnit 0)
-  GL.textureBinding GL.Texture2D $= Just textureObj
-  GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
-
-  GLFW.swapBuffers $ wsWindow ws
-  GLFW.pollEvents
-
-  -- switch back to the default framebuffer and render the background fb's contents
-  GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
-  GL.clearColor $= GL.Color4 0.0 0.0 0.0 1.0
-  GL.clear [GL.ColorBuffer]
-
-  GL.currentProgram $= Just (rsScreenShader env)
-  GL.bindVertexArrayObject $= Just (rsVAO env)
-  GL.activeTexture $= (GL.TextureUnit 0)
-  GL.textureBinding GL.Texture2D $= Just textureObj
-  GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
-
-  GLFW.swapBuffers $ wsWindow ws
-  GLFW.pollEvents
-
-  return env
-
-
-
-applyTextureUpdate :: TVar [Texture] -> TextureUpdate -> IO ()
-applyTextureUpdate textures textureUpdate =
-  case textureUpdate of
-    AssignVideo assignment vidID ->
-      atomically $ modifyTVar' textures $ map $ \texture ->
-        case texture of
-          Img _ -> texture
-          Vid _ ->
-            let newAssignments = newAssigns texture assignment vidID
-            in  if newAssignments /= assignments texture then
-                  updateAssignments (newAssigns texture assignment vidID) texture
-                else
-                  texture
-          LVd _ ->
-            let newAssignments = newAssigns texture assignment vidID
-            in  if newAssignments /= assignments texture then
-                  updateAssignments (newAssigns texture assignment vidID) texture
-                else
-                  texture
-
-    AssignImage assignment imgID ->
-      atomically $ modifyTVar' textures $ map $ \texture ->
-        case texture of
-          Vid _ -> texture
-          LVd _ -> texture
-          Img _ ->
-            let newAssignments = newAssigns texture assignment imgID
-            in  if newAssignments /= assignments texture then
-                  updateAssignments (newAssigns texture assignment imgID) texture
-                else
-                  texture
-  where
-    oldAssigns texture = assignments texture
-    newAssigns tex assignment tID
-      | texID tex /= tID && elem assignment (oldAssigns tex) = filter (/= assignment) (oldAssigns tex)
-      | texID tex == tID && not (elem assignment (oldAssigns tex)) = assignment : (oldAssigns tex)
-      | otherwise = oldAssigns tex
-
-
-
 compile :: SubGraph -> RIO RenderState ShaderProgram
 compile subGraph@(SubGraph units _ _) = ask >>= \env -> liftIO $ do
   ws    <- readIORef $ rsWindowState env
-  buses <- readIORef $ rsBuses env
+  buses <- readTVarIO $ wsBuses ws
 
   let (FragShader fragShader inputs output) = generateFragShader subGraph
       nID = (unitNodeID.head) units
-      inBuses = flip map inputs $ \(LBus inWireID _ _) ->
-                  InBus inWireID $ buses Map.! (nID, inWireID)
+      inWires = flip map inputs $ \(LBus inWireID _ _) -> inWireID
+
+  pPrint (FragShader fragShader inputs output)
 
   shaderProg <- compileShaderProgram vertexShader (Text.encodeUtf8 fragShader)
 
@@ -278,10 +187,10 @@ compile subGraph@(SubGraph units _ _) = ask >>= \env -> liftIO $ do
       let bus   = Bus fb tObj
           buses' = Map.insert (nID, outWireID) bus buses
 
-      writeIORef (rsBuses env) buses'
+      atomically $ writeTVar (wsBuses ws) buses'
 
-      return $ ShaderProgram shaderProg inBuses $ OutBus outWireID bus
-    _ -> return $ ShaderProgram shaderProg inBuses $ OutBus (-1) (rsDefaultOutBus env)
+      return $ ShaderProgram shaderProg inWires outWireID
+    _ -> return $ ShaderProgram shaderProg inWires (-1)
 
 
 

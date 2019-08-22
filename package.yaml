@@ -34,6 +34,7 @@ dependencies:
 - MissingH
 - JuicyPixels
 - monad-loops
+- mtl
 - ObjectName
 - OpenGL
 - OpenGLRaw
@@ -46,6 +47,7 @@ dependencies:
 - signal
 - split
 - stm
+- transformers
 - vector
 - zeromq4-haskell
 
@@ -64,7 +66,7 @@ executables:
     - -Wcompat
     - -Widentities
     - -Wincomplete-record-updates
-    - -Wincomplete-uni-patterns
+    # - -Wincomplete-uni-patterns
     # - -Wpartial-fields
     - -Wredundant-constraints
     - -Werror=missing-fields

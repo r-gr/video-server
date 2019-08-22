@@ -86,14 +86,7 @@ runServer opts = withContext $ \ctx -> do
 
       case mbMsg of
         Nothing -> putStrLn "*** Error: Invalid JSON received."
-
-        -- -- Do nothing if passed an internal message over IPC
-        -- Just (InternalWindowFree _) ->
-        --   putStrLn "*** Error: Invalid JSON received."
-        -- Just InternalServerQuit ->
-        --   putStrLn "*** Error: Invalid JSON received."
-
-        Just m -> atomically $ writeTBQueue msgQIn (External m)
+        Just m  -> atomically $ writeTBQueue msgQIn (External m)
 
   {- Read messages from the out queue and send them over IPC to scsynth.
   -}
@@ -134,13 +127,13 @@ runServer opts = withContext $ \ctx -> do
 
 handleExternalMsg :: ExternalMsg -> RIO Env ()
 handleExternalMsg m = ask >>= \env -> case m of
-  {- GLWindowNew: spawn a new GLFW window running a 'blank' shader program
-     and check for messages on its dedicated queue. Performing these
-     messages updates the running shader program.
+  {- GLWindowNew: spawn a new GLFW window running a 'blank' shader program and
+     check for messages on its dedicated queue. Performing these messages
+     updates the running shader program.
 
      If a window is already running, ignore the message. Multiple windows
-     running in parallel is not to be implemented unless as an extension
-     goal of the project.
+     running in parallel is not to be implemented unless as an extension goal of
+     the project.
   -}
   GLWindowNew winID wWidth wHeight -> do
     let ctx           = envCtx env
@@ -162,8 +155,8 @@ handleExternalMsg m = ask >>= \env -> case m of
       return ()
 
 
-  {- GLWindowFree: close the GLFW window with the specified window ID,
-     clean up and free any associated resources.
+  {- GLWindowFree: close the GLFW window with the specified window ID, clean up
+     and free any associated resources.
   -}
   wFreeMsg@(GLWindowFree winID) -> do
     let messageQueues = envMsgQueues env
@@ -171,8 +164,8 @@ handleExternalMsg m = ask >>= \env -> case m of
     modifyIORef' messageQueues $ \mq -> IntMap.delete winID mq
 
 
-  {- GraphNew: compile the GLSL fragment shader from the graph structure,
-     spawn a new GLFW window and run the shader program in that window.
+  {- GraphNew: compile the GLSL fragment shader from the graph structure, spawn
+     a new GLFW window and run the shader program in that window.
   -}
   graphNewMsg@(GraphNew _gID gUnits) -> do
     let glUGenNames = envGlUgenNames env
@@ -182,8 +175,8 @@ handleExternalMsg m = ask >>= \env -> case m of
         forwardMsg winID graphNewMsg
 
 
-  {- GraphFree: close the window associated with the specified graph ID,
-     clean up and free any resources used.
+  {- GraphFree: close the window associated with the specified graph ID, clean
+     up and free any resources used.
   -}
   GraphFree gphID -> do
     msgQs <- readIORef $ envMsgQueues env
@@ -195,39 +188,53 @@ handleExternalMsg m = ask >>= \env -> case m of
      window ID. This just forwards the message to the window by putting the
      message on the window's queue.
   -}
-  vNewMsg@(GLVideoNew _vID _vPath _vLoop _vRate winID) ->
+  vNewMsg@(GLVideoNew _vID _vPath winID) ->
     forwardMsg winID vNewMsg
 
 
-  {- GLVideoNew: load a video into memory in the window specified by the
-     window ID and prepare it for playback. This just forwards the message
-     to the window by putting the message on the window's queue.
+  {- GLVideoRead: load a video into memory in the window specified by the window
+     ID and prepare it for playback. This just forwards the message to the
+     window by putting the message on the window's queue.
   -}
-  vReadMsg@(GLVideoRead _vID _vPath _vLoop _vRate winID) ->
+  vReadMsg@(GLVideoRead _vID _vPath winID) ->
     forwardMsg winID vReadMsg
 
 
-  {- GLVideoFree: free up the resources associated with the video in the
-     window specified by the window ID. This will stop video playback but
-     doesn't clear the video texture(?) or modify the shader program.
+  {- GLVideoFree: free up the resources associated with the video in the window
+     specified by the window ID.
   -}
   vFreeMsg@(GLVideoFree _vID winID) ->
     forwardMsg winID vFreeMsg
 
 
   {- GLImageNew: load an image from the supplied file path in the window
-     specified by the window ID. This just forwards the message to the
-     window by putting the message on the window's queue.
+     specified by the window ID. This just forwards the message to the window by
+     putting the message on the window's queue.
   -}
   iNewMsg@(GLImageNew _vID _vPath winID) ->
     forwardMsg winID iNewMsg
 
 
-  {- GLImageFree: delete the image of specified ID in that window. Do
-     nothing if an image with that ID doesn't exist.
+  {- GLImageFree: delete the image of specified ID in that window. Do nothing if
+     an image with that ID doesn't exist.
   -}
   iFreeMsg@(GLImageFree _vID winID) ->
     forwardMsg winID iFreeMsg
+
+
+  {- DelBufNew: allocate a new delay buffer (a buffer of frames) of the
+     specified length, replacing and freeing any existing buffer with that
+     buffer ID.
+  -}
+  delBufNewMsg@(DelBufNew _bufID _bufLen winID) ->
+    forwardMsg winID delBufNewMsg
+
+
+  {- DelBufFree: delete any existing delay buffer with the specified buffer ID,
+     freeing any associated resources and doing nothing if it doesn't exist.
+  -}
+  delBufFreeMsg@(DelBufFree _bufID winID) ->
+    forwardMsg winID delBufFreeMsg
 
 
   {- TODO

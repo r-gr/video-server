@@ -9,7 +9,9 @@ import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.List (groupBy, nub, sortOn)
 import Data.Maybe
+import Text.Pretty.Simple (pPrint)
 
+import MyPrelude
 import Types
 
 
@@ -153,7 +155,9 @@ partition scUnits = do
       else
         return ()
 
-  readIORef linksRef >>= return.(groupUnitsInSubGraphs unitsMap)
+  result <- readIORef linksRef >>= return.(groupUnitsInSubGraphs unitsMap)
+  pPrint result
+  return result
   where
     -- TODO: I'm certain there's a better way to compose these IO results than
     --       needing to define a new function here.
@@ -196,9 +200,6 @@ groupUnitsInSubGraphs units links =
     unitGroups
     |> map (\g -> SubGraph (map fst g) (subGraphInputs g) (subGraphOutput g))
   where
-    (|>) :: a -> (a -> b) -> b
-    x |> f = f x
-
     findDestination :: Unit -> Maybe Link -> Unit
     findDestination u Nothing = u
     findDestination _ (Just (LBus _ src _))   = units IntMap.! src
@@ -211,8 +212,8 @@ groupUnitsInSubGraphs units links =
       graph
       |> concatMap (unitInputs.fst)
       |> filter (\l -> case IntMap.lookup l links of
-                            Just (LBus _ _ _) -> True
-                            _ -> False)
+                         Just (LBus _ _ _) -> True
+                         _ -> False)
       |> map (links IntMap.!)
       |> nub
 

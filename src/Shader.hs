@@ -19,8 +19,6 @@ import RIO.List.Partial
 import qualified RIO.Text as Text
 
 import Control.Monad (forM)
--- import Data.ByteString (ByteString)
--- import Data.ByteString.Char8 (pack, unpack)
 import qualified Data.ByteString.Char8 as C
 import Data.FileEmbed (embedDir, embedFile)
 import Data.List (nub)
@@ -31,6 +29,7 @@ import System.Directory
 import System.IO.Error (catchIOError)
 import System.IO.Unsafe (unsafePerformIO)
 
+import MyPrelude
 import Types
 
 
@@ -103,7 +102,6 @@ parseFnSig glslFn =
   |> filter (not . (flip elem) ["", "in", "out", "inout"])
   |> argTypes
   where
-    x |> f = f x
     argTypes [] = []
     argTypes [_] = []
     argTypes (x:_:xs) = x : argTypes xs
@@ -113,21 +111,22 @@ parseFnSig glslFn =
 -}
 generateFragShader :: SubGraph -> FragShader
 generateFragShader (SubGraph units inputs output) =
-  let fsCode = Text.concat [ fsHeader
-                      , fsUniforms inputs units
-                      , fsFunctions units
-                      , "void main() {\n"
-                      , "    FragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
-                      , fsMain inputs output units
-                      , "}\n"
-                      ]
+  let units' = units -- filter (\u -> unitName u /= "DelBufWr") units
+      fsCode = Text.concat [ fsHeader
+                           , fsUniforms inputs units'
+                           , fsFunctions units'
+                           , "void main() {\n"
+                           , "    FragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
+                           , fsMain inputs output units'
+                           , "}\n"
+                           ]
   in  FragShader fsCode inputs output
   where
     fsHeader = Text.concat [ "#version 330 core\n\n"
-                      , "in  vec2 TexCoord;\n"
-                      , "out vec4 FragColor;\n\n"
-                      , "uniform sampler2D sc_PrevFrame;\n\n"
-                      ]
+                           , "in  vec2 TexCoord;\n"
+                           , "out vec4 FragColor;\n\n"
+                           -- , "uniform sampler2D sc_PrevFrame;\n\n"
+                           ]
 
 
 fsUniforms :: [Link] -> Graph -> Text
@@ -230,8 +229,6 @@ fnType name =
   |> shaderGlslFn
   |> Text.dropWhile (== ' ') -- strip leading whitespace
   |> Text.takeWhile (/= ' ') -- strip space after type identifier
-  where
-    x |> f = f x
 
 
 lBusIDs :: [Link] -> [WireID]
