@@ -17,7 +17,7 @@ import qualified Data.ByteString.Char8 as C
 import Data.ByteString.Lazy (fromStrict)
 import Data.Int (Int32)
 import qualified Data.IntMap.Strict as IntMap
-import Fmt
+-- import Fmt
 import System.ZMQ4 (receive)
 
 import Types
@@ -90,7 +90,7 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
       players     = wsPlayers env
       delBufs     = wsDelBufs env
       buses       = wsBuses env
-      -- updateQueue = wsUpdateQueue env
+      updateQueue = wsUpdateQueue env
 
   msg <- receive socket
 
@@ -104,29 +104,6 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
       atomically $ writeTBQueue uniformVals dataMsg
 
 
-    -- PlayVidMsg (RawPlayVid uIn16 gID32 uID32 vidID32 vRateF vLoop32) -> do
-    --   let gID   = fromIntegral gID32   :: Int
-    --       uID   = fromIntegral uID32   :: Int
-    --       uIn   = fromIntegral uIn16   :: Int
-    --       vidID = fromIntegral vidID32 :: Int
-    --       vLoop = vLoop32 /= (0 :: Int32)
-    --       vRate = realToFrac vRateF    :: Double
-    --       assignment = (gID, uID, uIn)
-
-    --   players' <- readTVarIO players
-    --   videos'  <- readTVarIO videos
-
-    --   case IntMap.lookup vidID videos' of
-    --     Nothing -> return ()
-    --     Just _  ->
-    --       case Map.lookup assignment players' of
-    --         Just (PlayVid bp) -> if getVideoID bp == vidID
-    --           then do
-    --             atomically $ writeTVar (bpRate bp) vRate
-    --             atomically $ writeTVar (bpLoop bp) vLoop
-    --           else pushUpdate updateQueue $ WUPlayVid vidID assignment vRate vLoop
-    --         _ ->   pushUpdate updateQueue $ WUPlayVid vidID assignment vRate vLoop
-
     PlayVidMsg (RawPlayVid uIn16 gID32 uID32 vidID32 vRateF vLoop32) -> do
       let gID   = fromIntegral gID32   :: Int
           uID   = fromIntegral uID32   :: Int
@@ -136,41 +113,45 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
           vRate = realToFrac vRateF    :: Double
           assignment = (gID, uID, uIn)
 
-      players' <- readTVarIO players
-      videos'  <- readTVarIO videos
+      players' <- readIORef players
+      videos'  <- readIORef videos
 
       case IntMap.lookup vidID videos' of
         Nothing -> return ()
-        Just v  ->
+        Just _  ->
           case Map.lookup assignment players' of
-            Nothing -> addBasicPlayer players v assignment vRate vLoop
-            Just (VidRd _) ->
-              addBasicPlayer players v assignment vRate vLoop
             Just (PlayVid bp) -> if getVideoID bp == vidID
               then do
                 atomically $ writeTVar (bpRate bp) vRate
                 atomically $ writeTVar (bpLoop bp) vLoop
-              else addBasicPlayer players v assignment vRate vLoop
+              else pushUpdate updateQueue $ WUPlayVid vidID assignment vRate vLoop
+            _ ->   pushUpdate updateQueue $ WUPlayVid vidID assignment vRate vLoop
 
-
-    -- AssignImageMsg (RawAssignImage uIn16 gID32 uID32 imgID32) -> do
+    -- PlayVidMsg (RawPlayVid uIn16 gID32 uID32 vidID32 vRateF vLoop32) -> do
     --   let gID   = fromIntegral gID32   :: Int
     --       uID   = fromIntegral uID32   :: Int
     --       uIn   = fromIntegral uIn16   :: Int
-    --       imgID = fromIntegral imgID32 :: Int
+    --       vidID = fromIntegral vidID32 :: Int
+    --       vLoop = vLoop32 /= (0 :: Int32)
+    --       vRate = realToFrac vRateF    :: Double
     --       assignment = (gID, uID, uIn)
 
-    --   images' <- readTVarIO images
-    --   case IntMap.lookup imgID images' of
-    --     Nothing  -> return ()
-    --     Just img -> do
-    --       let assignments = (iAssignments img)
-    --           assignmentExists = elem assignment assignments
+    --   players' <- readIORef players
+    --   videos'  <- readIORef videos
 
-    --       if not assignmentExists then
-    --         pushUpdate updateQueue $ WUAssignImage imgID assignment
-    --       else
-    --         return ()
+    --   case IntMap.lookup vidID videos' of
+    --     Nothing -> return ()
+    --     Just v  ->
+    --       case Map.lookup assignment players' of
+    --         Nothing -> addBasicPlayer players v assignment vRate vLoop
+    --         Just (VidRd _) ->
+    --           addBasicPlayer players v assignment vRate vLoop
+    --         Just (PlayVid bp) -> if getVideoID bp == vidID
+    --           then do
+    --             atomically $ writeTVar (bpRate bp) vRate
+    --             atomically $ writeTVar (bpLoop bp) vLoop
+    --           else addBasicPlayer players v assignment vRate vLoop
+
 
     AssignImageMsg (RawAssignImage uIn16 gID32 uID32 imgID32) -> do
       let gID   = fromIntegral gID32   :: Int
@@ -179,7 +160,7 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
           imgID = fromIntegral imgID32 :: Int
           assignment = (gID, uID, uIn)
 
-      images' <- readTVarIO images
+      images' <- readIORef images
       case IntMap.lookup imgID images' of
         Nothing  -> return ()
         Just img -> do
@@ -187,32 +168,30 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
               assignmentExists = elem assignment assignments
 
           if not assignmentExists then
-            atomically $ modifyTVar' (wsImages env) $
-              IntMap.insert imgID (img { iAssignments = assignment : assignments })
+            pushUpdate updateQueue $ WUAssignImage imgID assignment
           else
             return ()
 
-
-    -- VidRdMsg (RawVidRd uIn16 gID32 uID32 vidID32 vPhase) -> do
+    -- AssignImageMsg (RawAssignImage uIn16 gID32 uID32 imgID32) -> do
     --   let gID   = fromIntegral gID32   :: Int
     --       uID   = fromIntegral uID32   :: Int
     --       uIn   = fromIntegral uIn16   :: Int
-    --       vidID = fromIntegral vidID32 :: Int
+    --       imgID = fromIntegral imgID32 :: Int
     --       assignment = (gID, uID, uIn)
 
-    --   players' <- readTVarIO players
-    --   videos'  <- readTVarIO videos
+    --   images' <- readIORef images
+    --   case IntMap.lookup imgID images' of
+    --     Nothing  -> return ()
+    --     Just img -> do
+    --       let assignments = (iAssignments img)
+    --           assignmentExists = elem assignment assignments
 
-    --   case IntMap.lookup vidID videos' of
-    --     Nothing -> return ()
-    --     Just _  ->
-    --       case Map.lookup assignment players' of
-    --         Nothing ->
-    --           pushUpdate updateQueue $ WUVidRd vidID assignment vPhase
-    --         Just (VidRd ph) ->
-    --           atomically $ writeTVar (phHeadPos ph) vPhase
-    --         Just (PlayVid _) -> do
-    --           pushUpdate updateQueue $ WUVidRd vidID assignment vPhase
+    --       if not assignmentExists then
+    --         atomically $ modifyTVar' (wsImages env) $
+    --           IntMap.insert imgID (img { iAssignments = assignment : assignments })
+    --       else
+    --         return ()
+
 
     VidRdMsg (RawVidRd uIn16 gID32 uID32 vidID32 vPhase) -> do
       let gID   = fromIntegral gID32   :: Int
@@ -221,44 +200,45 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
           vidID = fromIntegral vidID32 :: Int
           assignment = (gID, uID, uIn)
 
-      players' <- readTVarIO players
-      videos'  <- readTVarIO videos
+      players' <- readIORef players
+      videos'  <- readIORef videos
 
       case IntMap.lookup vidID videos' of
         Nothing -> return ()
-        Just v  ->
+        Just _  ->
           case Map.lookup assignment players' of
             Nothing ->
-              addPlaybackHead players v assignment vPhase
+              pushUpdate updateQueue $ WUVidRd vidID assignment vPhase
             Just (VidRd ph) ->
               atomically $ writeTVar (phHeadPos ph) vPhase
-            Just (PlayVid basicPlayer) -> do
-              addPlaybackHead players v assignment vPhase
-              -- free resources associated with old player
-              case bpOnDiskPlaybackTools basicPlayer of
-                Nothing  -> return ()
-                Just pts -> odptCleanupFFmpeg pts
+            Just (PlayVid _) -> do
+              pushUpdate updateQueue $ WUVidRd vidID assignment vPhase
 
-
-    -- DelBufRdMsg (RawDelBufRd uIn16 gID32 uID32 bufID32) -> do
+    -- VidRdMsg (RawVidRd uIn16 gID32 uID32 vidID32 vPhase) -> do
     --   let gID   = fromIntegral gID32   :: Int
     --       uID   = fromIntegral uID32   :: Int
     --       uIn   = fromIntegral uIn16   :: Int
-    --       bufID = fromIntegral bufID32 :: Int
+    --       vidID = fromIntegral vidID32 :: Int
     --       assignment = (gID, uID, uIn)
 
-    --   delBufs' <- readTVarIO delBufs
+    --   players' <- readIORef players
+    --   videos'  <- readIORef videos
 
-    --   case IntMap.lookup bufID delBufs' of
-    --     Nothing -> return () -- putStrLn $ "\n*** Debug: DelBufRdMsg - no delay buffer found "+|bufID|+"" -- return ()
-    --     Just db -> do
-    --       assignments <- readTVarIO $ dbAssignments db
-    --       let assignmentExists = elem assignment assignments
+    --   case IntMap.lookup vidID videos' of
+    --     Nothing -> return ()
+    --     Just v  ->
+    --       case Map.lookup assignment players' of
+    --         Nothing ->
+    --           addPlaybackHead players v assignment vPhase
+    --         Just (VidRd ph) -> do
+    --           atomically $ writeTVar (phHeadPos ph) vPhase
+    --         Just (PlayVid basicPlayer) -> do
+    --           addPlaybackHead players v assignment vPhase
+    --           -- free resources associated with old player
+    --           case bpOnDiskPlaybackTools basicPlayer of
+    --             Nothing  -> return ()
+    --             Just pts -> odptCleanupFFmpeg pts
 
-    --       if not assignmentExists then
-    --         pushUpdate updateQueue $ WUDelBufRd bufID assignment
-    --       else
-    --         return ()
 
     DelBufRdMsg (RawDelBufRd uIn16 gID32 uID32 bufID32) -> do
       let gID   = fromIntegral gID32   :: Int
@@ -267,44 +247,47 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
           bufID = fromIntegral bufID32 :: Int
           assignment = (gID, uID, uIn)
 
-      delBufs' <- readTVarIO delBufs
+      delBufs' <- readIORef delBufs
 
       case IntMap.lookup bufID delBufs' of
         Nothing -> return () -- putStrLn $ "\n*** Debug: DelBufRdMsg - no delay buffer found "+|bufID|+"" -- return ()
         Just db -> do
-          assignments <- readTVarIO $ dbAssignments db
+          assignments <- readIORef $ dbAssignments db
           let assignmentExists = elem assignment assignments
 
           if not assignmentExists then
-            atomically $ modifyTVar' (dbAssignments db) $ (:) assignment
+            pushUpdate updateQueue $ WUDelBufRd bufID assignment
           else
             return ()
 
+    -- DelBufRdMsg (RawDelBufRd uIn16 gID32 uID32 bufID32) -> do
+    --   let gID   = fromIntegral gID32   :: Int
+    --       uID   = fromIntegral uID32   :: Int
+    --       uIn   = fromIntegral uIn16   :: Int
+    --       bufID = fromIntegral bufID32 :: Int
+    --       assignment = (gID, uID, uIn)
 
-    -- DelBufWrMsg (RawDelBufWr _uIn16 gID32 _uID32 bufID32 wireID32) -> do
-    --   let gID    = fromIntegral gID32    :: Int
-    --       bufID  = fromIntegral bufID32  :: Int
-    --       wireID = fromIntegral wireID32 :: Int
-
-    --   delBufs' <- readTVarIO delBufs
-    --   buses'   <- readTVarIO buses
+    --   delBufs' <- readIORef delBufs
 
     --   case IntMap.lookup bufID delBufs' of
-    --     Nothing -> return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - no delay buffer found "+|bufID|+"" -- return ()
+    --     Nothing -> return () -- putStrLn $ "\n*** Debug: DelBufRdMsg - no delay buffer found "+|bufID|+"" -- return ()
     --     Just db -> do
-    --       let hd Seq.:<| _ = dbBuses db
-    --       case Map.lookup (gID, wireID) buses' of
-    --         Nothing  -> return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - no wire/bus found "+||(gID, wireID)||+"" -- return ()
-    --         Just bus -> if hd == bus then return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - doing nothing because hd == bus" -- return ()
-    --           else pushUpdate updateQueue $ WUDelBufWr gID bufID wireID
+    --       assignments <- readIORef $ dbAssignments db
+    --       let assignmentExists = elem assignment assignments
+
+    --       if not assignmentExists then
+    --         atomically $ modifyTVar' (dbAssignments db) $ (:) assignment
+    --       else
+    --         return ()
+
 
     DelBufWrMsg (RawDelBufWr _uIn16 gID32 _uID32 bufID32 wireID32) -> do
       let gID    = fromIntegral gID32    :: Int
           bufID  = fromIntegral bufID32  :: Int
           wireID = fromIntegral wireID32 :: Int
 
-      delBufs' <- readTVarIO delBufs
-      buses'   <- readTVarIO buses
+      delBufs' <- readIORef delBufs
+      buses'   <- readIORef buses
 
       case IntMap.lookup bufID delBufs' of
         Nothing -> return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - no delay buffer found "+|bufID|+"" -- return ()
@@ -313,39 +296,58 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
           case Map.lookup (gID, wireID) buses' of
             Nothing  -> return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - no wire/bus found "+||(gID, wireID)||+"" -- return ()
             Just bus -> if hd == bus then return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - doing nothing because hd == bus" -- return ()
-              else
-                atomically $ modifyTVar' (wsBuses env) $ Map.insert (gID, wireID) hd
+              else pushUpdate updateQueue $ WUDelBufWr gID bufID wireID
+
+    -- DelBufWrMsg (RawDelBufWr _uIn16 gID32 _uID32 bufID32 wireID32) -> do
+    --   let gID    = fromIntegral gID32    :: Int
+    --       bufID  = fromIntegral bufID32  :: Int
+    --       wireID = fromIntegral wireID32 :: Int
+
+    --   delBufs' <- readIORef delBufs
+    --   buses'   <- readIORef buses
+
+    --   case IntMap.lookup bufID delBufs' of
+    --     Nothing -> return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - no delay buffer found "+|bufID|+"" -- return ()
+    --     Just db -> do
+    --       let hd Seq.:<| _ = dbBuses db
+    --       case Map.lookup (gID, wireID) buses' of
+    --         Nothing  -> return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - no wire/bus found "+||(gID, wireID)||+"" -- return ()
+    --         Just bus -> if hd == bus then return () -- putStrLn $ "\n*** Debug: DelBufWrMsg - doing nothing because hd == bus" -- return ()
+    --           else
+    --             atomically $ modifyTVar' (wsBuses env) $ Map.insert (gID, wireID) hd
 
 
     InvalidMsg msgTypeVal-> do
       putStrLn $ "invalid message received. leading word16 has value: " ++ (show msgTypeVal)
       return ()
   where
-    -- pushUpdate updateQ msg = do
-    --   isFull <- atomically $ isFullTBQueue updateQ
-    --   if isFull then return ()
-    --             else atomically $ writeTBQueue updateQ msg
+    pushUpdate updateQ msg = do
+      -- putStrLn $ "*** Debug: about to push update " ++ (show msg)
+      isFull <- atomically $ isFullTBQueue updateQ
+      if isFull then return ()
+                else do atomically $ writeTBQueue updateQ msg
+                        -- putStrLn "*** Debug: finished pushing update"
 
-    addBasicPlayer players video assignment vRate vLoop = do
-      rate <- newTVarIO vRate
-      loop <- newTVarIO vLoop
-      let player = PlayVid $ BasicPlayer { bpVideo = video
-                                         , bpAssignment = assignment
-                                         , bpRate = rate
-                                         , bpLoop = loop
-                                         , bpStartTime = Nothing
-                                         , bpOnDiskPlaybackTools = Nothing
-                                         , bpInMemPlaybackTools = Nothing
-                                         }
-      atomically $ modifyTVar' players $ Map.insert assignment player
+    -- addBasicPlayer players video assignment vRate vLoop = do
+    --   rate <- newTVarIO vRate
+    --   loop <- newTVarIO vLoop
+    --   let player = PlayVid $ BasicPlayer { bpVideo = video
+    --                                      , bpAssignment = assignment
+    --                                      , bpRate = rate
+    --                                      , bpLoop = loop
+    --                                      , bpStartTime = Nothing
+    --                                      , bpOnDiskPlaybackTools = Nothing
+    --                                      , bpInMemPlaybackTools = Nothing
+    --                                      }
+    --   atomically $ modifyTVar' players $ Map.insert assignment player
 
-    addPlaybackHead players video assignment headPos = do
-      headPosTVar <- newTVarIO headPos
-      let player = VidRd $ PlaybackHead { phVideo = video
-                                        , phAssignment = assignment
-                                        , phHeadPos = headPosTVar
-                                        }
-      atomically $ modifyTVar' players $ Map.insert assignment player
+    -- addPlaybackHead players video assignment headPos = do
+    --   headPosTVar <- newTVarIO headPos
+    --   let player = VidRd $ PlaybackHead { phVideo = video
+    --                                     , phAssignment = assignment
+    --                                     , phHeadPos = headPosTVar
+    --                                     }
+    --   atomically $ modifyTVar' players $ Map.insert assignment player
 
 
 

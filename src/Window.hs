@@ -41,12 +41,12 @@ newWindow sock msgQIn msgQOut winID width height =
 
     uniformVals <- newTBQueueIO 1000 :: IO (TBQueue UnitData)
     updateQueue <- newTBQueueIO 1000 :: IO (TBQueue WindowUpdate)
-    images      <- newTVarIO (IntMap.empty :: IntMap ImageTexture) -- note: this might not need to be a TVar.
-    videos      <- newTVarIO (IntMap.empty :: IntMap Video)        -- same here
-    players     <- newTVarIO (Map.empty :: Map Assignment Player)
-    delBufs     <- newTVarIO (IntMap.empty :: IntMap DelBuf)
+    images      <- newIORef (IntMap.empty :: IntMap ImageTexture) -- note: this might not need to be a TVar.
+    videos      <- newIORef (IntMap.empty :: IntMap Video)        -- same here
+    players     <- newIORef (Map.empty :: Map Assignment Player)
+    delBufs     <- newIORef (IntMap.empty :: IntMap DelBuf)
     nodeTree    <- newIORef (IntMap.empty :: IntMap Node)
-    initBuses   <- newTVarIO Map.empty
+    initBuses   <- newIORef Map.empty
 
     -- TODO: clearly, the state should change when the window is resized etc.
     stateRef <- newIORef $ WindowState { wsWindow = window
@@ -148,9 +148,9 @@ withWindow width height title fn = liftIO $ do
 
 closeWindow :: RIO WindowState ()
 closeWindow = ask >>= \env -> liftIO $ do
-  images  <- readTVarIO $ wsImages  env
-  videos  <- readTVarIO $ wsVideos  env
-  players <- readTVarIO $ wsPlayers env
+  images  <- readIORef $ wsImages  env
+  videos  <- readIORef $ wsVideos  env
+  players <- readIORef $ wsPlayers env
 
   forM_ (IntMap.toList images) $ GL.deleteObjectName . iTexObj . snd
   forM_ (IntMap.toList videos) $ freeVideoResources . snd
@@ -183,8 +183,8 @@ processCommands = do
       GLWindowFree _winID -> runRIO env closeWindow
 
       GLVideoNew vidID vPath _winID -> liftIO $ do
-        videos  <- readTVarIO $ wsVideos env
-        players <- readTVarIO $ wsPlayers env
+        videos  <- readIORef $ wsVideos env
+        players <- readIORef $ wsPlayers env
 
         -- ensure any BasicPlayback players have their FFmpeg cleanup run
         -- and replace the playbackTools and startTime with Nothing
@@ -196,13 +196,13 @@ processCommands = do
 
         let video = OnDiskVid $ VideoFile { vID = vidID, vFilePath = vPath }
 
-        atomically $ writeTVar (wsPlayers env) players'
-        atomically $ modifyTVar' (wsVideos env) $ IntMap.insert vidID video
+        writeIORef (wsPlayers env) players'
+        modifyIORef' (wsVideos env) $ IntMap.insert vidID video
 
 
       GLVideoRead vidID vPath _winID -> liftIO $ do
-        videos  <- readTVarIO $ wsVideos env
-        players <- readTVarIO $ wsPlayers env
+        videos  <- readIORef $ wsVideos env
+        players <- readIORef $ wsPlayers env
 
         -- ensure any BasicPlayback players have their FFmpeg cleanup run
         -- and replace the playbackTools and startTime with Nothing
@@ -220,13 +220,13 @@ processCommands = do
 
         putStrLn $ "*** Info: finished reading video "+|vidID|+" into memory"
 
-        atomically $ writeTVar (wsPlayers env) players'
-        atomically $ modifyTVar' (wsVideos env) $ IntMap.insert vidID video
+        writeIORef (wsPlayers env) players'
+        modifyIORef' (wsVideos env) $ IntMap.insert vidID video
 
 
       GLVideoFree vidID _winID -> liftIO $ do
-        videos  <- readTVarIO $ wsVideos env
-        players <- readTVarIO $ wsPlayers env
+        videos  <- readIORef $ wsVideos env
+        players <- readIORef $ wsPlayers env
 
         case IntMap.lookup vidID videos of
           Just v  -> freeVideoResources v
@@ -235,12 +235,12 @@ processCommands = do
         let videos' = IntMap.delete vidID videos
         players' <- findPlayersByVidID vidID players |> deletePlayers
 
-        atomically $ writeTVar (wsVideos env) videos'
-        atomically $ writeTVar (wsPlayers env) players'
+        writeIORef (wsVideos env) videos'
+        writeIORef (wsPlayers env) players'
 
 
       GLImageNew imgID iPath _winID -> liftIO $ do
-        images <- readTVarIO (wsImages env)
+        images <- readIORef (wsImages env)
 
         case IntMap.lookup imgID images of
           Just image -> GL.deleteObjectName $ iTexObj image
@@ -249,17 +249,17 @@ processCommands = do
         tex <- newImageTexture imgID iPath
         case tex of
           Left errorStr -> putStrLn $ "*** Error: "+|errorStr|+""
-          Right image -> atomically $ modifyTVar' (wsImages env) $ IntMap.insert imgID image
+          Right image -> modifyIORef' (wsImages env) $ IntMap.insert imgID image
 
 
       GLImageFree imgID _winID -> liftIO $ do
-        images <- readTVarIO (wsImages env)
+        images <- readIORef (wsImages env)
 
         case IntMap.lookup imgID images of
           Just image -> GL.deleteObjectName $ iTexObj image
           Nothing    -> return ()
 
-        atomically $ modifyTVar' (wsImages env) $ IntMap.delete imgID
+        modifyIORef' (wsImages env) $ IntMap.delete imgID
 
 
       {- Add the received graph to the node tree and generate new shader program
@@ -283,7 +283,7 @@ processCommands = do
       -}
       GraphFree gID -> liftIO $ do
         modifyIORef (wsNodeTree env) $ \nt -> IntMap.delete gID nt
-        players <- readTVarIO $ wsPlayers env
+        players <- readIORef $ wsPlayers env
 
         players' <- findPlayersByGphID gID players |> deletePlayers
 
@@ -292,11 +292,11 @@ processCommands = do
                  also clear/delete the associated textures
         -}
 
-        atomically $ writeTVar (wsPlayers env) players'
+        writeIORef (wsPlayers env) players'
 
 
       DelBufNew bID bLen _winID -> do
-        delBufs <- readTVarIO $ wsDelBufs env
+        delBufs <- readIORef $ wsDelBufs env
 
         case IntMap.lookup bID delBufs of
           Nothing -> return ()
@@ -311,15 +311,15 @@ processCommands = do
 
         putStrLn $ "*** Info: DelBufNew - allocating new delay buffer, id = "+|bID|+", length = "+|bLen|+""
 
-        assignmentTVar <- newTVarIO []
+        assignmentTVar <- newIORef []
         delBuf <- Seq.replicateM (bLen + 1) (setupFramebuffer w h >>= return . (uncurry Bus))
                   >>= return . (DelBuf bID assignmentTVar)
 
-        atomically $ modifyTVar' (wsDelBufs env) $ IntMap.insert bID delBuf
+        modifyIORef' (wsDelBufs env) $ IntMap.insert bID delBuf
 
 
       DelBufFree bID _winID -> do
-        delBufs <- readTVarIO $ wsDelBufs env
+        delBufs <- readIORef $ wsDelBufs env
 
         case IntMap.lookup bID delBufs of
           Nothing -> return ()
@@ -330,7 +330,7 @@ processCommands = do
               GL.deleteObjectName fbo
               GL.deleteObjectName tObj
 
-            atomically $ modifyTVar' (wsDelBufs env) $ IntMap.delete bID
+            modifyIORef' (wsDelBufs env) $ IntMap.delete bID
 
 
       InVidDur _reqID _vidID _winID -> undefined -- do
@@ -363,23 +363,23 @@ applyUpdates = do
   forM_ updates' $ \update -> liftIO $ do
     case update of
       WUDelBufRd bufID assignment -> do
-        delBufs <- readTVarIO $ wsDelBufs env
+        delBufs <- readIORef $ wsDelBufs env
 
         case IntMap.lookup bufID delBufs of
           Nothing -> return () -- putStrLn $ "\n*** Debug: WUDelBufRd - no delay buffer found "+|bufID|+"" -- return ()
           Just db -> do
-            assignments <- readTVarIO $ dbAssignments db
+            assignments <- readIORef $ dbAssignments db
             let assignmentExists = elem assignment assignments
 
             if not assignmentExists then
-              atomically $ modifyTVar' (dbAssignments db) $ (:) assignment
+              modifyIORef (dbAssignments db) $ (:) assignment
             else
               return () -- putStrLn $ "\n*** Debug: WUDelBufRd - doing nothing because assignment exists" -- return ()
 
 
       WUDelBufWr nID bufID wireID -> do
-        delBufs <- readTVarIO $ wsDelBufs env
-        buses   <- readTVarIO $ wsBuses env
+        delBufs <- readIORef $ wsDelBufs env
+        buses   <- readIORef $ wsBuses env
 
         case IntMap.lookup bufID delBufs of
           Nothing -> return () -- putStrLn $ "\n*** Debug: WUDelBufWr - no delay buffer found "+|bufID|+"" -- return ()
@@ -388,11 +388,11 @@ applyUpdates = do
             case Map.lookup (nID, wireID) buses of
               Nothing  -> return () -- putStrLn $ "\n*** Debug: WUDelBufWr - no wire/bus found "+||(nID, wireID)||+"" -- return ()
               Just bus -> if hd == bus then return () else
-                atomically $ modifyTVar' (wsBuses env) $ Map.insert (nID, wireID) hd
+                modifyIORef (wsBuses env) $ Map.insert (nID, wireID) hd
 
 
       WUAssignImage imgID assignment -> do
-        images <- readTVarIO $ wsImages env
+        images <- readIORef $ wsImages env
         case IntMap.lookup imgID images of
           Nothing  -> return ()
           Just img -> do
@@ -400,15 +400,15 @@ applyUpdates = do
                 assignmentExists = elem assignment assignments
 
             if not assignmentExists then
-              atomically $ modifyTVar' (wsImages env) $
+              modifyIORef (wsImages env) $
                 IntMap.insert imgID (img { iAssignments = assignment : assignments })
             else
               return ()
 
 
       WUPlayVid vidID assignment rate loop -> do
-        players <- readTVarIO $ wsPlayers env
-        videos  <- readTVarIO $ wsVideos env
+        players <- readIORef $ wsPlayers env
+        videos  <- readIORef $ wsVideos env
 
         -- Despite the crazy nesting this isn't complicated. is there a better way?
         case IntMap.lookup vidID videos of
@@ -432,8 +432,8 @@ applyUpdates = do
 
 
       WUVidRd vidID assignment headPos -> do
-        players <- readTVarIO $ wsPlayers env
-        videos  <- readTVarIO $ wsVideos env
+        players <- readIORef $ wsPlayers env
+        videos  <- readIORef $ wsVideos env
 
         case IntMap.lookup vidID videos of
           Nothing -> return ()
@@ -461,7 +461,7 @@ applyUpdates = do
                                          , bpOnDiskPlaybackTools = Nothing
                                          , bpInMemPlaybackTools = Nothing
                                          }
-      atomically $ modifyTVar' players $ Map.insert assignment player
+      modifyIORef players $ Map.insert assignment player
 
     addPlaybackHead players video assignment headPos = do
       headPosTVar <- newTVarIO headPos
@@ -469,7 +469,7 @@ applyUpdates = do
                                         , phAssignment = assignment
                                         , phHeadPos = headPosTVar
                                         }
-      atomically $ modifyTVar' players $ Map.insert assignment player
+      modifyIORef players $ Map.insert assignment player
 
 
 

@@ -53,14 +53,14 @@ data Bus = Bus GL.FramebufferObject GL.TextureObject deriving (Eq, Show)
 
 data DelBuf = DelBuf
   { dbID          :: Int
-  , dbAssignments :: TVar [Assignment]
+  , dbAssignments :: IORef [Assignment]
   , dbBuses       :: Seq Bus
   }
 
 instance Show DelBuf where
   show (DelBuf bID bAs bBs) =
     "DelBuf {delBufID = "           ++ (show bID)
-        ++ ", delBufAssignments = " ++ (show $ unsafePerformIO (readTVarIO bAs))
+        ++ ", delBufAssignments = " ++ (show $ unsafePerformIO (readIORef bAs))
         ++ ", delBufBuses = "       ++ (show bBs)
         ++ "}"
 
@@ -96,11 +96,11 @@ data WindowState = WindowState
   , wsMsgQIn :: TBQueue ExternalMsg
   , wsMsgQOut :: TBQueue Msg
   , wsSubSocket :: Socket Sub
-  , wsImages :: TVar (IntMap ImageTexture)
-  , wsVideos :: TVar (IntMap Video)
-  , wsPlayers :: TVar (Map Assignment Player)
-  , wsDelBufs :: TVar (IntMap DelBuf)
-  , wsBuses :: TVar (Map (NodeID, WireID) Bus)
+  , wsImages :: IORef (IntMap ImageTexture)
+  , wsVideos :: IORef (IntMap Video)
+  , wsPlayers :: IORef (Map Assignment Player)
+  , wsDelBufs :: IORef (IntMap DelBuf)
+  , wsBuses :: IORef (Map (NodeID, WireID) Bus)
   , wsNodeTree :: IORef (IntMap Node)
   , wsUniformVals :: TBQueue UnitData
   , wsUpdateQueue :: TBQueue WindowUpdate
@@ -118,12 +118,6 @@ data RenderState = RenderState
   , rsVAO :: GL.VertexArrayObject
   -- , rsBuses :: IORef (Map (NodeID, WireID) Bus)
   , rsDefaultOutBus :: Bus
-  -- TODO: sort out the feedback implementation so this isn't required
-  -- , rsIter1 :: IORef Bool
-  -- , rsTB1 :: GL.TextureObject
-  -- , rsFB1 :: GL.FramebufferObject
-  -- , rsTB2 :: GL.TextureObject
-  -- , rsFB2 :: GL.FramebufferObject
   , rsMaxTexUnits :: GL.GLsizei
   }
 

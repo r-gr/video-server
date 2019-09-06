@@ -15,7 +15,7 @@ import Codec.Picture
 import Control.Monad (replicateM)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
-import Fmt
+-- import Fmt
 import Foreign.Marshal.Alloc (free, mallocBytes)
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
@@ -34,11 +34,11 @@ displayDelBuf :: DelBuf -> RIO ShaderState ()
 displayDelBuf delBuf = case dbBuses delBuf of
   Seq.Empty              -> return ()
   _ Seq.:|> (Bus _ tObj) -> do
-    assignments <- readTVarIO $ dbAssignments delBuf
+    assignments <- readIORef $ dbAssignments delBuf
     -- liftIO $ putStrLn $ "\n*** Debug: displaying delay buffer "+||delBuf||+""
     forM_ assignments $ \assignment -> do
-      result <- bindTexture tObj assignment
-      -- liftIO $ putStrLn $ "*** Debug: bindTexture "+||tObj||+" "+||assignment||+" - "+|result|+""
+      _success <- bindTexture tObj assignment
+      -- liftIO $ putStrLn $ "*** Debug: bindTexture "+||tObj||+" "+||assignment||+" - "+|success|+""
       return ()
 
 

@@ -1,7 +1,7 @@
 module Render (compile, render, setupRendering) where
 
 
-import Prelude (putStrLn)
+-- import Prelude (putStrLn)
 import RIO
 import qualified RIO.Text as Text
 import RIO.List.Partial (head)
@@ -13,7 +13,7 @@ import Data.Foldable (forM_)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
-import Fmt
+-- import Fmt
 import Foreign.Ptr (nullPtr)
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
@@ -60,7 +60,7 @@ render = ask >>= \env -> liftIO $ do
   {- Update texture and float uniforms.
   -}
   nodeTree' <- readIORef $ wsNodeTree ws
-  buses <- readTVarIO $ wsBuses ws
+  buses <- readIORef $ wsBuses ws
 
   uniforms <- atomically $ STM.flushTBQueue $ wsUniformVals ws
   let uniformUpdates = IntMap.fromListWith (++)
@@ -104,9 +104,9 @@ render = ask >>= \env -> liftIO $ do
       --       uID before attempting to set the uniform.
       setFloatUniform shaderProgram name (uDataValue u)
 
-    images  <- readTVarIO $ wsImages  ws
-    players <- readTVarIO $ wsPlayers ws
-    delBufs <- readTVarIO $ wsDelBufs ws
+    images  <- readIORef $ wsImages  ws
+    players <- readIORef $ wsPlayers ws
+    delBufs <- readIORef $ wsDelBufs ws
 
     -- TODO: note - this attempts to set every texture in every shader program
     --       and silently fails for the cases that don't work. this is also
@@ -122,7 +122,7 @@ render = ask >>= \env -> liftIO $ do
       -- liftIO $ putStrLn (show db)
       displayDelBuf db
 
-    atomically $ writeTVar (wsPlayers ws) $
+    writeIORef (wsPlayers ws) $
       players' |> filter (isJust) |> map (fromJust) |> Map.fromList
 
     -- bind input bus(es) to texture units
@@ -133,8 +133,8 @@ render = ask >>= \env -> liftIO $ do
       let Bus _ tObj = buses Map.! (nID, wireID)
       in  bindInputBus shaderProgram i wireID tObj
 
-    let b@(Bus out _) = if outWire == (-1) then rsDefaultOutBus env
-                                         else buses Map.! (nID, outWire)
+    let Bus out _ = if outWire == (-1) then rsDefaultOutBus env
+                                       else buses Map.! (nID, outWire)
     -- putStrLn $ "*** Debug: rendering to wire "+|outWire|+", bus "+||b||+""
     GL.bindFramebuffer GL.Framebuffer $= out
     GL.clearNamedFramebuffer out
@@ -145,7 +145,7 @@ render = ask >>= \env -> liftIO $ do
     GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
 
   -- rotate the frames in the delay buffers to move them along by one
-  atomically $ modifyTVar' (wsDelBufs ws) $ \dbs ->
+  modifyIORef' (wsDelBufs ws) $ \dbs ->
                  dbs
                  |> IntMap.toList
                  |> map (\(k, db) -> (k, db { dbBuses = rotate (dbBuses db) }))
@@ -171,7 +171,7 @@ render = ask >>= \env -> liftIO $ do
 compile :: SubGraph -> RIO RenderState ShaderProgram
 compile subGraph@(SubGraph units _ _) = ask >>= \env -> liftIO $ do
   ws    <- readIORef $ rsWindowState env
-  buses <- readTVarIO $ wsBuses ws
+  buses <- readIORef $ wsBuses ws
 
   let (FragShader fragShader inputs output) = generateFragShader subGraph
       nID = (unitNodeID.head) units
@@ -187,7 +187,7 @@ compile subGraph@(SubGraph units _ _) = ask >>= \env -> liftIO $ do
       let bus   = Bus fb tObj
           buses' = Map.insert (nID, outWireID) bus buses
 
-      atomically $ writeTVar (wsBuses ws) buses'
+      writeIORef (wsBuses ws) buses'
 
       return $ ShaderProgram shaderProg inWires outWireID
     _ -> return $ ShaderProgram shaderProg inWires (-1)
