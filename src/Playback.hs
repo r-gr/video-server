@@ -60,11 +60,12 @@ playbackHead player = ask >>= \env -> liftIO $
           frameIndex = rawIndex `mod` numFrames
           frameTObj  = fst $ frames V'.! frameIndex
 
-      success <- runRIO env $ bindTexture frameTObj (phAssignment player)
+      _success <- runRIO env $ bindTexture frameTObj (phAssignment player)
 
-      if success
-        then return $ Just player
-        else return Nothing
+      return $ Just player
+      -- if success
+      --   then return $ Just player
+      --   else return Nothing
 
 
 
