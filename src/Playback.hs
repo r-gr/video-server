@@ -150,19 +150,20 @@ basicPlayback player = do
          | scheduledFrame > numFrames - 1 -> do -- loop back to start
              let currentFrame' = scheduledFrame `mod` numFrames
                  (frameTObj, _) = frames V'.! currentFrame'
-             liftIO $ putStrLn $ "*** Debug: numFrames = " ++ (show numFrames)
-             liftIO $ putStrLn $ "*** Debug: currentFrame' = " ++ (show currentFrame')
              success <- bindTexture frameTObj (bpAssignment player)
+             let startTime' = (\t -> t - ((fromIntegral currentFrame') * frameInterval))
+                           <$> glCurrentTime
              if not success
-               then return $ Just $ player { bpStartTime = Nothing }
-               else do
-                let startTime' = (\t -> t - ((fromIntegral currentFrame') * frameInterval))
-                              <$> glCurrentTime
-                return $ Just
-                       $ player { bpStartTime = startTime'
-                                , bpInMemPlaybackTools = Just $
-                                    playbackTools { imptCurrentFrame = currentFrame' }
-                                }
+               then return $ Just
+                           $ player { bpStartTime = startTime'
+                                    , bpInMemPlaybackTools = Just $
+                                        playbackTools { imptCurrentFrame = 0 }
+                                    }
+               else return $ Just
+                           $ player { bpStartTime = startTime'
+                                    , bpInMemPlaybackTools = Just $
+                                        playbackTools { imptCurrentFrame = currentFrame' }
+                                    }
          | otherwise -> do
              let (frameTObj, _) = frames V'.! scheduledFrame
              success <- bindTexture frameTObj (bpAssignment player)
