@@ -1,4 +1,6 @@
-module Server (runServer) where
+module Server
+  ( runServer
+  ) where
 
 
 import Prelude (putStrLn)

@@ -1,7 +1,9 @@
-module Window (newWindow) where
+module Window
+  ( newWindow
+  ) where
 
 
-import Prelude (putStrLn)
+import MyPrelude
 import RIO
 import qualified RIO.List as List
 import qualified RIO.Map as Map
@@ -12,9 +14,7 @@ import Control.Concurrent
 import qualified Control.Concurrent.STM as STM
 import Control.Monad.Loops
 import Data.Foldable (foldlM)
-import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
-import Fmt
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
@@ -24,7 +24,6 @@ import Text.Printf (printf)
 import GLUtils
 import Graph
 import Msg
-import MyPrelude
 import Render
 import Shader
 import Types
@@ -84,7 +83,7 @@ newWindow sock msgQIn msgQOut winID width height =
       -- set window title to current FPS
       -- TODO: handle case where getTime returns Nothing
       currentTime <- GLFW.getTime >>= return.fromJust
-      modifyIORef numFrames (+ 1.0)
+      modifyIORef' numFrames (+ 1.0)
       lastTime' <- readIORef lastTime
       if currentTime - lastTime' >= 1.0 then do
         numFrames' <- readIORef numFrames
@@ -98,10 +97,10 @@ newWindow sock msgQIn msgQOut winID width height =
         runRIO windowState closeWindow
         atomically $ writeTBQueue msgQOut $ Internal (WindowFree winID)
       else do
-        -- windowState <- readIORef stateRef
+        windowState <- readIORef stateRef
         renderState <- readIORef renderStateRef
         processInput window monitor videoMode isFullscreen
-        runRIO initWindowState applyUpdates
+        runRIO windowState applyUpdates
         runRIO renderState processCommands
         renderState' <- runRIO renderState render
         writeIORef renderStateRef renderState'
@@ -124,7 +123,6 @@ withWindow width height title fn = liftIO $ do
       GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 3
       GLFW.windowHint $ GLFW.WindowHint'ContextVersionMinor 3
       GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
-      GLFW.windowHint $ GLFW.WindowHint'RefreshRate $ Just 5
       -- GLFW.windowHint $ GLFW.WindowHint'RefreshRate $ Just 240
 
       window <- GLFW.createWindow width height ("scsynth-video '" ++ title ++ "'") Nothing Nothing
@@ -275,14 +273,14 @@ processCommands = do
                           []
                           subGraphs
 
-        modifyIORef (wsNodeTree env) $ \nt -> IntMap.insert gID (Node shaders glUnits) nt
+        modifyIORef' (wsNodeTree env) $ \nt -> IntMap.insert gID (Node shaders) nt
 
 
       {- Delete the graph from the node tree and generate a new shader program
          from the updated node tree
       -}
       GraphFree gID -> liftIO $ do
-        modifyIORef (wsNodeTree env) $ \nt -> IntMap.delete gID nt
+        modifyIORef' (wsNodeTree env) $ \nt -> IntMap.delete gID nt
         players <- readIORef $ wsPlayers env
 
         players' <- findPlayersByGphID gID players |> deletePlayers
@@ -359,22 +357,21 @@ applyUpdates = do
   env <- ask
   updates <- atomically $ STM.flushTBQueue $ wsUpdateQueue env
   let updates' = List.nub updates
-  -- liftIO $ putStrLn $ "*** Debug: applying "+||length updates'||+" updates"
   forM_ updates' $ \update -> liftIO $ do
     case update of
       WUDelBufRd bufID assignment -> do
         delBufs <- readIORef $ wsDelBufs env
 
         case IntMap.lookup bufID delBufs of
-          Nothing -> return () -- putStrLn $ "\n*** Debug: WUDelBufRd - no delay buffer found "+|bufID|+"" -- return ()
+          Nothing -> return ()
           Just db -> do
             assignments <- readIORef $ dbAssignments db
             let assignmentExists = elem assignment assignments
 
             if not assignmentExists then
-              modifyIORef (dbAssignments db) $ (:) assignment
+              modifyIORef' (dbAssignments db) $ (:) assignment
             else
-              return () -- putStrLn $ "\n*** Debug: WUDelBufRd - doing nothing because assignment exists" -- return ()
+              return ()
 
 
       WUDelBufWr nID bufID wireID -> do
@@ -382,13 +379,13 @@ applyUpdates = do
         buses   <- readIORef $ wsBuses env
 
         case IntMap.lookup bufID delBufs of
-          Nothing -> return () -- putStrLn $ "\n*** Debug: WUDelBufWr - no delay buffer found "+|bufID|+"" -- return ()
+          Nothing -> return ()
           Just db -> do
             let hd Seq.:<| _ = dbBuses db
             case Map.lookup (nID, wireID) buses of
-              Nothing  -> return () -- putStrLn $ "\n*** Debug: WUDelBufWr - no wire/bus found "+||(nID, wireID)||+"" -- return ()
+              Nothing  -> return ()
               Just bus -> if hd == bus then return () else
-                modifyIORef (wsBuses env) $ Map.insert (nID, wireID) hd
+                modifyIORef' (wsBuses env) $ Map.insert (nID, wireID) hd
 
 
       WUAssignImage imgID assignment -> do
@@ -400,7 +397,7 @@ applyUpdates = do
                 assignmentExists = elem assignment assignments
 
             if not assignmentExists then
-              modifyIORef (wsImages env) $
+              modifyIORef' (wsImages env) $
                 IntMap.insert imgID (img { iAssignments = assignment : assignments })
             else
               return ()
@@ -461,7 +458,7 @@ applyUpdates = do
                                          , bpOnDiskPlaybackTools = Nothing
                                          , bpInMemPlaybackTools = Nothing
                                          }
-      modifyIORef players $ Map.insert assignment player
+      modifyIORef' players $ Map.insert assignment player
 
     addPlaybackHead players video assignment headPos = do
       headPosTVar <- newTVarIO headPos
@@ -469,7 +466,7 @@ applyUpdates = do
                                         , phAssignment = assignment
                                         , phHeadPos = headPosTVar
                                         }
-      modifyIORef players $ Map.insert assignment player
+      modifyIORef' players $ Map.insert assignment player
 
 
 

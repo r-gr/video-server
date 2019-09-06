@@ -1,17 +1,17 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Shader ( Shader(..)
-              , ugenShaderFns
-              , defaultFragShader
-              , vertexShader
-              , screenVertShader
-              , screenFragShader
-              , uniformName
-              , generateFragShader
-              ) where
+module Shader
+  ( Shader(..)
+  , ugenShaderFns
+  , vertexShader
+  , screenVertShader
+  , screenFragShader
+  , uniformName
+  , generateFragShader
+  ) where
 
 
-import Prelude (putStrLn)
+import MyPrelude
 import RIO
 import RIO.ByteString (ByteString)
 import RIO.List
@@ -24,12 +24,10 @@ import Data.FileEmbed (embedDir, embedFile)
 import Data.List (nub)
 import Data.List.Split (splitOneOf)
 import Data.List.Utils (endswith)
-import Fmt
 import System.Directory
 import System.IO.Error (catchIOError)
 import System.IO.Unsafe (unsafePerformIO)
 
-import MyPrelude
 import Types
 
 
@@ -39,6 +37,8 @@ data Shader = Shader { shaderName :: Text
                      } deriving (Show)
 
 
+-- {-# NOINLINE ugenShaderFns #-}
+{-# INLINE ugenShaderFns #-}
 ugenShaderFns :: [Shader]
 ugenShaderFns = unsafePerformIO $ do
   shaders <- catchIOError loadUGensFromAppDir $ \_e -> (return embeddedShaders)
@@ -71,9 +71,6 @@ embeddedShaders = map (loadShader.(\(f, bs) -> (f, Text.pack $ C.unpack bs))) $(
 
 vertexShader :: ByteString
 vertexShader = $(embedFile "lib/vertex_shader.vert")
-
-defaultFragShader :: ByteString
-defaultFragShader = $(embedFile "lib/default_frag_shader.frag")
 
 screenVertShader :: ByteString
 screenVertShader = $(embedFile "lib/screen_shader.vert")

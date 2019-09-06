@@ -1,4 +1,6 @@
-module Graph (partition) where
+module Graph
+  ( partition
+  ) where
 
 
 import RIO

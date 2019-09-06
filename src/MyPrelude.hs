@@ -1,8 +1,15 @@
-module MyPrelude where
+module MyPrelude ( module MyPrelude
+                 , module Fmt
+                 , Prelude.putStr
+                 , Prelude.putStrLn
+                 ) where
 
+import qualified Prelude as Prelude
 import qualified RIO.List.Partial as List'
 import RIO.Seq (Seq)
 import qualified RIO.Seq as Seq
+
+import Fmt
 
 {- This operator already exists as the symbol '&' but I think that is horrible
    notation and the |> ('pipe') operator is found in this form in other

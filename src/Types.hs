@@ -6,7 +6,6 @@ import RIO.Seq (Seq)
 
 import Codec.Picture
 import Data.Aeson
--- import Fmt
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 import System.IO.Unsafe (unsafePerformIO)
@@ -21,9 +20,7 @@ data CmdLineOpts = CmdLineOpts
   }
 
 type NodeID = Int
--- TODO: temporarily storing the graph to let the check for GLPrevFrame
---       in the Render module to stay in place
-data Node = Node [ShaderProgram] SCGraph | Group (IntMap Node)
+data Node = Node [ShaderProgram] | Group (IntMap Node)
 
 type WireID  = Int
 type UnitID  = Int

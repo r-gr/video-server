@@ -1,7 +1,11 @@
-module Render (compile, render, setupRendering) where
+module Render
+  ( compile
+  , render
+  , setupRendering
+  ) where
 
 
--- import Prelude (putStrLn)
+import MyPrelude
 import RIO
 import qualified RIO.Text as Text
 import RIO.List.Partial (head)
@@ -13,7 +17,6 @@ import Data.Foldable (forM_)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
--- import Fmt
 import Foreign.Ptr (nullPtr)
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.Rendering.OpenGL as GL
@@ -21,7 +24,6 @@ import qualified Graphics.UI.GLFW as GLFW
 import Text.Pretty.Simple (pPrint)
 
 import GLUtils
-import MyPrelude
 import Playback
 import Shader
 import Types
@@ -30,12 +32,11 @@ import Types
 setupRendering :: IORef WindowState -> IO RenderState
 setupRendering wsRef = do
   ws <- readIORef wsRef
-  initShaderProgram <- compileShaderProgram vertexShader defaultFragShader
   screenShader <- compileShaderProgram screenVertShader screenFragShader
 
   (vao, _vbo, _ebo) <- setupGeometry
 
-  GL.currentProgram $= Just initShaderProgram
+  GL.currentProgram $= Just screenShader
 
   -- create a default output bus
   (defaultFbo, defaultTexOut) <- setupFramebuffer (wsWidth ws) (wsHeight ws)
@@ -104,6 +105,10 @@ render = ask >>= \env -> liftIO $ do
       --       uID before attempting to set the uniform.
       setFloatUniform shaderProgram name (uDataValue u)
 
+    -- bind input bus(es) to texture units
+    forM_ inWires $ \wireID ->
+      runRIO shaderState $ bindInputBus wireID $ buses Map.! (nID, wireID)
+
     images  <- readIORef $ wsImages  ws
     players <- readIORef $ wsPlayers ws
     delBufs <- readIORef $ wsDelBufs ws
@@ -117,25 +122,15 @@ render = ask >>= \env -> liftIO $ do
     players' <- runRIO shaderState $ forM (Map.toList $ players) $ \(k, p) ->
                   play p >>= \case Just p' -> return $ Just (k, p')
                                    Nothing -> return Nothing
-    runRIO shaderState $ forM_ delBufs $ \db -> do
-      -- liftIO $ putStrLn $ "\n\n*** Debug: displaying delay buffer "+||db||+""
-      -- liftIO $ putStrLn (show db)
-      displayDelBuf db
+    runRIO shaderState $ forM_ delBufs displayDelBuf
 
     writeIORef (wsPlayers ws) $
       players' |> filter (isJust) |> map (fromJust) |> Map.fromList
 
-    -- bind input bus(es) to texture units
-    -- TODO?: as above, it might be possible to use texture unit 0 but will need
-    --        to figure out how that interacts with other texture unit
-    --        assignments to avoid the visual glitches.
-    forM_ (zip [1..] inWires) $ \(i, wireID) ->
-      let Bus _ tObj = buses Map.! (nID, wireID)
-      in  bindInputBus shaderProgram i wireID tObj
+
 
     let Bus out _ = if outWire == (-1) then rsDefaultOutBus env
                                        else buses Map.! (nID, outWire)
-    -- putStrLn $ "*** Debug: rendering to wire "+|outWire|+", bus "+||b||+""
     GL.bindFramebuffer GL.Framebuffer $= out
     GL.clearNamedFramebuffer out
       $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
@@ -199,7 +194,7 @@ recurseNodeTree nodeTree = IntMap.foldrWithKey recurseNodes [] nodeTree
   where
     recurseNodes :: NodeID -> Node -> [(NodeID, ShaderProgram)] -> [(NodeID, ShaderProgram)]
     recurseNodes nID node shaderProgs =
-      case node of Node  sps _ -> recurseShaderProgs nID sps shaderProgs
+      case node of Node  sps   -> recurseShaderProgs nID sps shaderProgs
                    Group nodes -> (recurseNodeTree nodes) ++ shaderProgs
 
     recurseShaderProgs _   []     shaderProgs = shaderProgs

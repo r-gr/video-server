@@ -1,7 +1,11 @@
-module Playback (play, displayImage, displayDelBuf) where
+module Playback
+  ( play
+  , displayImage
+  , displayDelBuf
+  ) where
 
 
-import Prelude (putStrLn)
+import MyPrelude
 import RIO
 import RIO.Partial
 import qualified RIO.Seq as Seq
@@ -15,7 +19,6 @@ import Codec.Picture
 import Control.Monad (replicateM)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
--- import Fmt
 import Foreign.Marshal.Alloc (free, mallocBytes)
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
@@ -35,10 +38,8 @@ displayDelBuf delBuf = case dbBuses delBuf of
   Seq.Empty              -> return ()
   _ Seq.:|> (Bus _ tObj) -> do
     assignments <- readIORef $ dbAssignments delBuf
-    -- liftIO $ putStrLn $ "\n*** Debug: displaying delay buffer "+||delBuf||+""
     forM_ assignments $ \assignment -> do
       _success <- bindTexture tObj assignment
-      -- liftIO $ putStrLn $ "*** Debug: bindTexture "+||tObj||+" "+||assignment||+" - "+|success|+""
       return ()
 
 

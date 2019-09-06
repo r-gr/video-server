@@ -1,20 +1,20 @@
 module GLUtils
-    ( processInput
-    , compileShaderProgram
-    , newImageTexture
-    , freeVideoResources
-    , setupGeometry
-    , setupFramebuffer
-    , loadVideo
-    , setFloatUniform
-    , bindInputBus
-    , bindTexture
-    , setupTexture
-    , writeImageToTexture
-    ) where
+  ( processInput
+  , compileShaderProgram
+  , newImageTexture
+  , freeVideoResources
+  , setupGeometry
+  , setupFramebuffer
+  , loadVideo
+  , setFloatUniform
+  , bindInputBus
+  , bindTexture
+  , setupTexture
+  , writeImageToTexture
+  ) where
 
 
-import Prelude (putStrLn)
+import MyPrelude
 import RIO
 import RIO.Partial
 import RIO.List.Partial
@@ -26,7 +26,6 @@ import Control.Monad.Loops (whileM)
 import Data.ByteString (ByteString)
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as SV
-import Fmt
 import Foreign.Marshal.Array (withArray)
 import Foreign.Ptr (nullPtr, plusPtr)
 import Foreign.Storable (sizeOf)
@@ -161,6 +160,7 @@ setupFramebuffer width height = do
   framebuffer <- GL.genObjectName :: IO (GL.FramebufferObject)
   GL.bindFramebuffer GL.Framebuffer $= framebuffer
 
+  GL.activeTexture $= GL.TextureUnit 0
   -- create a color attachment texture
   textureColorbuffer <- GL.genObjectName
   GL.textureBinding GL.Texture2D $= Just textureColorbuffer
@@ -181,6 +181,7 @@ setupFramebuffer width height = do
     --       for whatever reason.
   else return ()
 
+  GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
   return (framebuffer, textureColorbuffer)
 
 
@@ -237,7 +238,7 @@ writeImageToTexture textureObject image = do
       texHeight = fromIntegral $ imageHeight image
 
   -- bind texture (it shouldn't matter what texture unit is active right now)
-  -- GL.activeTexture $= textureUnit
+  GL.activeTexture $= GL.TextureUnit 0
   GL.textureBinding GL.Texture2D $= Just textureObject
   -- set the texture wrapping parameters
   GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
@@ -257,6 +258,7 @@ writeImageToTexture textureObject image = do
 
 setupTexture :: IO GL.TextureObject
 setupTexture = do
+  GL.activeTexture $= GL.TextureUnit 0
   -- load and create a texture
   textureObject <- GL.genObjectName
   GL.textureBinding GL.Texture2D $= Just textureObject
@@ -286,6 +288,7 @@ loadVideo videoID videoPath = do
         let imgWidth  = fromIntegral $ imageWidth  imageRGBA8
             imgHeight = fromIntegral $ imageHeight imageRGBA8
 
+        GL.activeTexture $= GL.TextureUnit 0
         -- bind texture
         GL.textureBinding GL.Texture2D $= Just textureObject
         -- set the texture wrapping parameters
@@ -314,21 +317,30 @@ loadVideo videoID videoPath = do
 
 
 
-bindInputBus :: GL.Program -> Int -> WireID -> GL.TextureObject -> IO ()
-bindInputBus shaderProgram index wire textureObject = do
-  let textureUnit = GL.TextureUnit (fromIntegral index)
-  -- putStrLn $ "*** Debug: bindInputBus - textureUnit " ++ (show index)
-  -- GL.activeTexture $= textureUnit
-  texLocation <- GL.uniformLocation shaderProgram $ "u_Bus_Local_" ++ (show wire)
-  if texLocation >= (GL.UniformLocation 0)
-    then do
-      GL.uniform texLocation $= textureUnit
+bindInputBus :: WireID -> Bus -> RIO ShaderState Bool
+bindInputBus wire (Bus _ tObj) = ask >>= \env -> liftIO $ do
+  texUnits <- readIORef $ ssTextureUnits env
+  case texUnits of
+    [] -> do
+      putStrLn "*** Error: not enough texture units available to display image/video."
+      return False
+    (t:ts) -> do
+      texLocation <- GL.uniformLocation (ssShaderProgram env) $ "u_Bus_Local_" ++ (show wire)
+      if texLocation >= (GL.UniformLocation 0)
+        then do
+          GL.currentProgram $= Just (ssShaderProgram env)
+          -- bind texture
+          GL.activeTexture $= t
+          GL.textureBinding GL.Texture2D $= Just tObj
+          -- set the uniform location to this texture unit
+          GL.uniform texLocation $= t
+          -- set active texture back to default
+          GL.activeTexture $= GL.TextureUnit 0
+          -- update the available texture units
+          writeIORef (ssTextureUnits env) ts
+          return True
 
-      -- bind texture
-      GL.activeTexture $= textureUnit
-      GL.textureBinding GL.Texture2D $= Just textureObject
-
-  else return ()
+      else return False
 
 
 
@@ -340,19 +352,19 @@ bindTexture textureObject (gID, uID, uIn) = ask >>= \env -> liftIO $ do
       putStrLn "*** Error: not enough texture units available to display image/video."
       return False
     (t:ts) -> do
-      GL.activeTexture $= t
-
-      -- (\(GL.TextureUnit i) -> putStrLn $ "*** Debug: bindTexture textureUnit " ++ (show i)) t
-
       let uniform = Text.unpack $ uniformName gID uID uIn
       texLocation <- GL.uniformLocation (ssShaderProgram env) uniform
 
       if texLocation >= (GL.UniformLocation 0) then do
-        GL.uniform texLocation $= t
-
+        GL.currentProgram $= Just (ssShaderProgram env)
         -- bind texture
         GL.activeTexture $= t
         GL.textureBinding GL.Texture2D $= Just textureObject
+        -- set the uniform location to this texture unit
+        GL.uniform texLocation $= t
+        -- set active texture back to default
+        GL.activeTexture $= GL.TextureUnit 0
+        -- update the available texture units
         writeIORef (ssTextureUnits env) ts
         return True
 
