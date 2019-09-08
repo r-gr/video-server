@@ -216,7 +216,7 @@ newImageTexture imgID iPath = do
       textureObject <- setupTexture
       let imageRGBA8 = convertRGBA8 dynamicImg
       writeImageToTexture textureObject imageRGBA8
-      putStrLn $ "*** Debug:: new image texture ID = "+|imgID|+""
+      putStrLn $ "*** Debug: new image texture ID = "+|imgID|+""
       return $ Right $ ImageTexture { iTexObj      = textureObject
                                     , iAssignments = []
                                     , iID          = imgID
