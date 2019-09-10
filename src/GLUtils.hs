@@ -167,9 +167,9 @@ setupFramebuffer width height = do
   GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
   GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
   GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
-  GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGB'
+  GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGBA'
     (GL.TextureSize2D (fromIntegral width) (fromIntegral height)) 0
-    (GL.PixelData GL.RGB GL.UnsignedByte nullPtr)
+    (GL.PixelData GL.RGBA GL.UnsignedByte nullPtr)
   GL.textureFilter GL.Texture2D $= ((GL.Linear', Nothing), GL.Linear')
   GL.framebufferTexture2D GL.Framebuffer (GL.ColorAttachment 0)
     GL.Texture2D textureColorbuffer 0
