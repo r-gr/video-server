@@ -72,6 +72,10 @@ render = ask >>= \env -> liftIO $ do
   GL.clearNamedFramebuffer outBusFbo
     $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
 
+  -- let texUnitMin = 1 -- (fromIntegral $ length inWires) + 1
+  --     texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
+  -- textureUnits <- newIORef $ map GL.TextureUnit [texUnitMin..texUnitMax]
+
   forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inWires outWire) -> do
     GL.currentProgram $= Just shaderProgram
 
@@ -83,7 +87,7 @@ render = ask >>= \env -> liftIO $ do
     --        It might be possible to fix this by carefully working out how and
     --        when texture objects are bound to the texture units for the shader
     --        programs.
-    let texUnitMin = (fromIntegral $ length inWires) + 1
+    let texUnitMin = 1 -- (fromIntegral $ length inWires) + 1
         texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
     textureUnits <- newIORef $ map GL.TextureUnit [texUnitMin..texUnitMax]
 
@@ -105,7 +109,20 @@ render = ask >>= \env -> liftIO $ do
       --       uID before attempting to set the uniform.
       setFloatUniform shaderProgram name (uDataValue u)
 
+    -- unbind any texture units
+    -- let textureUnits' = map GL.TextureUnit [0..texUnitMax]
+    -- forM_ textureUnits' $ \t -> do GL.activeTexture $= t
+    --                                GL.textureBinding GL.Texture2D $= Nothing
+    -- GL.activeTexture $= GL.TextureUnit 0
+    -- (forM textureUnits' $ \t -> do GL.activeTexture $= t
+    --                                tb <- GL.get $ GL.textureBinding GL.Texture2D
+    --                                return (t, tb)) >>= pPrint
+
+    -- -- putStrLn ""
+    -- GL.activeTexture $= GL.TextureUnit 0
+
     -- bind input bus(es) to texture units
+    -- putStrLn $ "*** Debug: inWires = " ++ (show inWires)
     forM_ inWires $ \wireID ->
       runRIO shaderState $ bindInputBus wireID $ buses Map.! (nID, wireID)
 
@@ -127,15 +144,13 @@ render = ask >>= \env -> liftIO $ do
     writeIORef (wsPlayers ws) $
       players' |> filter (isJust) |> map (fromJust) |> Map.fromList
 
-
-
     let Bus out _ = if outWire == (-1) then rsDefaultOutBus env
                                        else buses Map.! (nID, outWire)
+
     GL.bindFramebuffer GL.Framebuffer $= out
     GL.clearNamedFramebuffer out
       $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
 
-    GL.currentProgram $= Just shaderProgram
     GL.bindVertexArrayObject $= Just (rsVAO env)
     GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
 
@@ -151,6 +166,14 @@ render = ask >>= \env -> liftIO $ do
     $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
 
   GL.currentProgram $= Just (rsScreenShader env)
+
+  let texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
+  -- unbind any texture units
+  let textureUnits' = map GL.TextureUnit [0..texUnitMax]
+  forM_ textureUnits' $ \t -> do GL.activeTexture $= t
+                                 GL.textureBinding GL.Texture2D $= Nothing
+  GL.activeTexture $= GL.TextureUnit 0
+
   GL.bindVertexArrayObject $= Just (rsVAO env)
   GL.activeTexture $= (GL.TextureUnit 0)
   GL.textureBinding GL.Texture2D $= Just outBusTObj

@@ -267,6 +267,8 @@ processCommands = do
         let glUGenNames = map shaderName ugenShaderFns
             glUnits = filter (\u -> elem (scUnitName u) glUGenNames) gUnits
 
+        -- putStrLn $ "*** Debug: glUGenNames = " ++ (show glUGenNames)
+
         -- convert SCGraph to SubGraphs
         subGraphs <- partition glUnits
         shaders <- foldlM (\sProgs sg -> runRIO rs (compile sg) >>= \sProg -> return $ sProgs ++ [sProg])
@@ -356,7 +358,7 @@ applyUpdates :: RIO WindowState ()
 applyUpdates = do
   env <- ask
   updates <- atomically $ STM.flushTBQueue $ wsUpdateQueue env
-  let updates' = List.nub updates
+  let updates' = List.take 100 . List.reverse $ updates -- List.nub updates
   forM_ updates' $ \update -> liftIO $ do
     case update of
       WUDelBufRd bufID assignment -> do

@@ -73,7 +73,7 @@ playbackHead player = ask >>= \env -> liftIO $
 basicPlayback :: BasicPlayer -> RIO ShaderState (Maybe BasicPlayer)
 basicPlayback player = do
   if | isJust (bpOnDiskPlaybackTools player) -> continueOnDiskPlayback
-     | isOnDiskVid (bpVideo player)    -> beginOnDiskPlayback (0 :: Int)
+     | isOnDiskVid (bpVideo player)    -> beginOnDiskPlayback Nothing (0 :: Int)
      | isJust (bpStartTime player)     -> continueInMemPlayback
      | otherwise                       -> beginInMemPlayback (0 :: Int)
   where
@@ -85,7 +85,7 @@ basicPlayback player = do
       let frameTObj = fst (frames V'.! startingFrame)
       success <- bindTexture frameTObj (bpAssignment player)
       if not success
-        then return Nothing
+        then return $ Just player -- Nothing
         else do
           glCurrentTime <- liftIO GLFW.getTime
           -- NOTE: assumes constant frame rate. Incorrect behaviour for videos
@@ -96,40 +96,42 @@ basicPlayback player = do
                                  , bpInMemPlaybackTools = Just playbackTools
                                  }
 
-    beginOnDiskPlayback :: Int -> RIO ShaderState (Maybe BasicPlayer)
-    beginOnDiskPlayback startingFrame = ask >>= \env -> liftIO $ do
-      let (OnDiskVid video) = bpVideo player
-      eitherPlaybackTools <- liftIO $ setupPlayback video
-      case eitherPlaybackTools of
-        Left e -> do
-          putStrLn $ "*** Error: FFmpeg setup unsuccessful. " ++ e
-          return Nothing
-        Right playbackTools -> do
-          _ <- liftIO $ replicateM startingFrame $ odptSkipFrame playbackTools
-          frame <- liftIO $ odptNextFrame playbackTools
-          case frame of
-            Nothing -> return $ Just player
-            Just (imageRGBA8, _timestamp) -> do
-              writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
+    beginOnDiskPlayback :: Maybe GL.TextureObject -> Int -> RIO ShaderState (Maybe BasicPlayer)
+    beginOnDiskPlayback mbTObj startingFrame = do
+      textureBindable <- canBindTexture (bpAssignment player)
+      if not textureBindable then return $ Just player else ask >>= \env -> liftIO $ do
+        let (OnDiskVid video) = bpVideo player
+        eitherPlaybackTools <- liftIO $ setupPlayback mbTObj video
+        case eitherPlaybackTools of
+          Left e -> do
+            putStrLn $ "*** Error: FFmpeg setup unsuccessful. " ++ e
+            return Nothing
+          Right playbackTools -> do
+            _ <- liftIO $ replicateM startingFrame $ odptSkipFrame playbackTools
+            frame <- liftIO $ odptNextFrame playbackTools
+            case frame of
+              Nothing -> return Nothing
+              Just (imageRGBA8, _timestamp) -> do
+                writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
 
-              success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
-                                                    (bpAssignment player)
+                success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
+                                                      (bpAssignment player)
 
-              if not success then return Nothing
-              else do
-                glCurrentTime <- GLFW.getTime
-                rate <- readTVarIO $ bpRate player
+                if not success then return $ Just player
+                else do
+                  glCurrentTime <- GLFW.getTime
+                  rate <- readTVarIO $ bpRate player
 
-                let framerate     = odptFps playbackTools
-                    frameInterval = 1 / (framerate * rate)
-                    skippedFrames = fromIntegral startingFrame
-                    startTime     = (\t -> t - (skippedFrames * frameInterval))
-                                 <$> glCurrentTime
+                  let framerate     = odptFps playbackTools
+                      frameInterval = 1 / (framerate * rate)
+                      skippedFrames = fromIntegral startingFrame
+                      startTime     = (\t -> t - (skippedFrames * frameInterval))
+                                   <$> glCurrentTime
 
-                return $ Just $
-                  player { bpStartTime     = startTime
-                         , bpOnDiskPlaybackTools = Just playbackTools
-                         }
+                  return $ Just $
+                    player { bpStartTime     = startTime
+                           , bpOnDiskPlaybackTools = Just playbackTools
+                           }
 
     continueInMemPlayback :: RIO ShaderState (Maybe BasicPlayer)
     continueInMemPlayback = do
@@ -146,8 +148,12 @@ basicPlayback player = do
           currentFrame   = imptCurrentFrame playbackTools
           framesRef      = vFrames videoData
           numFrames      = vNumFrames videoData
+
       frames <- readIORef framesRef
-      if | scheduledFrame <= currentFrame -> return $ Just player
+      textureBindable <- canBindTexture (bpAssignment player)
+
+      if | not textureBindable            -> return $ Just player
+         | scheduledFrame <= currentFrame -> return $ Just player
          | (scheduledFrame > numFrames - 1) && (not loop) -> return Nothing
          | scheduledFrame > numFrames - 1 -> do -- loop back to start
              let currentFrame' = scheduledFrame `mod` numFrames
@@ -189,40 +195,34 @@ basicPlayback player = do
           scheduledFrame = fromMaybe 0 $ floor <$> (/ frameInterval) <$> currentTime
           currentFrame   = odptCurrentFrame playbackTools
 
-      if scheduledFrame <= currentFrame then return $ Just player
-      else do
-        let skippedFrames = scheduledFrame - currentFrame - 1
+      textureBindable <- canBindTexture (bpAssignment player)
 
-        -- liftIO $ putStrLn $ "\n\n\nstartTime = " ++ (show startTime)
-        -- liftIO $ putStrLn $ "glCurrentTime = " ++ (show glCurrentTime)
-        -- liftIO $ putStrLn $ "currentTime = " ++ (show currentTime)
-        -- liftIO $ putStrLn $ "framerate = " ++ (show framerate)
-        -- liftIO $ putStrLn $ "frameInterval = " ++ (show frameInterval)
-        -- liftIO $ putStrLn $ "scheduledFrame = " ++ (show scheduledFrame)
-        -- liftIO $ putStrLn $ "currentFrame = " ++ (show currentFrame)
-        -- liftIO $ putStrLn $ "skippedFrames = " ++ (show skippedFrames)
+      if | not textureBindable            -> return $ Just player
+         | scheduledFrame <= currentFrame -> return $ Just player
+         | otherwise -> do
+             let skippedFrames = scheduledFrame - currentFrame - 1
 
-        -- skip over any missed frames
-        skipResults <- liftIO $ replicateM skippedFrames $ odptSkipFrame playbackTools
+             -- skip over any missed frames
+             skipResults <- liftIO $ replicateM skippedFrames $ odptSkipFrame playbackTools
 
-        frame <- liftIO $ odptNextFrame playbackTools
-        case frame of
-          Nothing -> maybeLoopVideo skipResults loop
-          Just (imageRGBA8, _timestamp) -> do
-            liftIO $ writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
+             frame <- liftIO $ odptNextFrame playbackTools
+             case frame of
+               Nothing -> maybeLoopVideo skipResults loop (odptTextureObject playbackTools)
+               Just (imageRGBA8, _timestamp) -> do
+                 liftIO $ writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
 
-            success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
-                                                (bpAssignment player)
-            if not success
-            then return $ Just player -- Nothing
-            else return $ Just $
-              player { bpOnDiskPlaybackTools = Just $
-                         playbackTools { odptCurrentFrame = scheduledFrame }
-                     }
+                 success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
+                                                     (bpAssignment player)
+                 if not success
+                 then return $ Just player -- Nothing
+                 else return $ Just $
+                   player { bpOnDiskPlaybackTools = Just $
+                              playbackTools { odptCurrentFrame = scheduledFrame }
+                          }
 
-    maybeLoopVideo :: [Bool] -> Bool -> RIO ShaderState (Maybe BasicPlayer)
-    maybeLoopVideo skipFrameResults shouldLoop
-      | shouldLoop = beginOnDiskPlayback (length.(filter not) $ skipFrameResults)
+    maybeLoopVideo :: [Bool] -> Bool -> GL.TextureObject -> RIO ShaderState (Maybe BasicPlayer)
+    maybeLoopVideo skipFrameResults shouldLoop tObj
+      | shouldLoop = beginOnDiskPlayback (Just tObj) (length.(filter not) $ skipFrameResults)
       | otherwise  = let pts = fromJust $ bpOnDiskPlaybackTools player
                      in  do liftIO $ odptCleanupFFmpeg pts
                             liftIO $ GL.deleteObjectName . odptTextureObject $ pts
@@ -230,8 +230,8 @@ basicPlayback player = do
 
 
 
-setupPlayback :: VideoFile -> IO (Either String OnDiskPlaybackTools)
-setupPlayback video = runExceptT $ do
+setupPlayback :: Maybe GL.TextureObject -> VideoFile -> IO (Either String OnDiskPlaybackTools)
+setupPlayback mbTObj video = runExceptT $ do
   {- to get FPS, need to `getTimeBase` from the `AVStream`.
      this returns a numerator and a denominator.
      then need to get the `pts` from the packet (timestamp in `time_base` units)
@@ -283,7 +283,9 @@ setupPlayback video = runExceptT $ do
                      return (r >= 0)
 
   -- TODO: make texture repeat and filtering settings configurable
-  textureObject <- liftIO $ setupTexture
+  textureObject <- case mbTObj of
+                     Nothing -> liftIO $ setupTexture
+                     Just tObj -> return tObj
 
   return $ OnDiskPlaybackTools { odptNextFrame = frameGrabber
                                , odptSkipFrame = skipFrame

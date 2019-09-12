@@ -11,6 +11,7 @@ module GLUtils
   , bindTexture
   , setupTexture
   , writeImageToTexture
+  , canBindTexture
   ) where
 
 
@@ -329,6 +330,7 @@ bindInputBus wire (Bus _ tObj) = ask >>= \env -> liftIO $ do
       if texLocation >= (GL.UniformLocation 0)
         then do
           GL.currentProgram $= Just (ssShaderProgram env)
+          -- putStrLn $ "*** Debug: bindInputBus "+||tObj||+" using "+||t||+""
           -- bind texture
           GL.activeTexture $= t
           GL.textureBinding GL.Texture2D $= Just tObj
@@ -357,6 +359,7 @@ bindTexture textureObject (gID, uID, uIn) = ask >>= \env -> liftIO $ do
 
       if texLocation >= (GL.UniformLocation 0) then do
         GL.currentProgram $= Just (ssShaderProgram env)
+        -- putStrLn $ "*** Debug: bindTexture "+||textureObject||+" using "+||t||+""
         -- bind texture
         GL.activeTexture $= t
         GL.textureBinding GL.Texture2D $= Just textureObject
@@ -369,3 +372,10 @@ bindTexture textureObject (gID, uID, uIn) = ask >>= \env -> liftIO $ do
         return True
 
       else return False
+
+
+canBindTexture :: Assignment -> RIO ShaderState Bool
+canBindTexture (gID, uID, uIn) = ask >>= \env -> liftIO $ do
+  let uniform = Text.unpack $ uniformName gID uID uIn
+  texLocation <- GL.uniformLocation (ssShaderProgram env) uniform
+  return $ texLocation >= (GL.UniformLocation 0)
