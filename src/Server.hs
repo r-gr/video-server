@@ -8,11 +8,11 @@ import RIO
 
 import Control.Concurrent (forkFinally, forkOS, killThread)
 import Control.Monad (forever, forM_)
+import Control.Monad.Loops (whileM_)
 import Data.Aeson
 import qualified Data.ByteString.Char8 as C
 import Data.ByteString.Lazy.Char8 (fromStrict, toStrict)
 import qualified Data.IntMap.Strict as IntMap
-import System.Exit
 import System.IO.Unsafe (unsafePerformIO)
 import System.Signal
 import System.ZMQ4 hiding (message)
@@ -60,11 +60,12 @@ data Env = Env
   { envCtx         :: !Context
   , envOpts        :: !CmdLineOpts
   , envGlUgenNames :: ![Text]
-  , envMsgQueues   :: IORef (IntMap.IntMap (TBQueue ExternalMsg))
-  , envMsgQIn      :: TBQueue Msg
-  , envMsgQOut     :: TBQueue Response
+  , envMsgQueues   :: !(IORef (IntMap.IntMap (TBQueue ExternalMsg)))
+  , envMsgQIn      :: !(TBQueue Msg)
+  , envMsgQOut     :: !(TBQueue Response)
   , envSendThread  :: !ThreadId
   , envRecvThread  :: !ThreadId
+  , envServerExit  :: !(MVar ())
   }
 
 
@@ -103,6 +104,8 @@ runServer opts = withContext $ \ctx -> do
   -- there may be an undesirable pause when the first GraphNew is received.
   let !glUGenNames = map shaderName ugenShaderFns
 
+  serverExitMVar <- newEmptyMVar
+
   let env = Env { envCtx = ctx
                 , envOpts = opts
                 , envGlUgenNames = glUGenNames
@@ -111,19 +114,25 @@ runServer opts = withContext $ \ctx -> do
                 , envMsgQOut = msgQOut
                 , envSendThread = sendThread
                 , envRecvThread = recvThread
+                , envServerExit = serverExitMVar
                 }
 
   installHandler sigABRT $ \_signal -> runRIO env $ handleInternalMsg ServerQuit
   installHandler sigINT  $ \_signal -> runRIO env $ handleInternalMsg ServerQuit
   installHandler sigTERM $ \_signal -> runRIO env $ handleInternalMsg ServerQuit
 
+  serverExit <- newIORef False
+
   {- Handle any messages added to the message queue.
   -}
-  forever $ do
-    msg <- atomically $ readTBQueue msgQIn
+  whileM_ (fmap not $ readIORef serverExit) $ do
+    result <- race (readMVar serverExitMVar) (atomically $ readTBQueue msgQIn)
 
-    case msg of External m -> runRIO env $ handleExternalMsg m
-                Internal m -> runRIO env $ handleInternalMsg m
+    case result of
+      Left ()   -> writeIORef serverExit True
+      Right msg ->
+        case msg of External m -> runRIO env $ handleExternalMsg m
+                    Internal m -> runRIO env $ handleInternalMsg m
 
 
 
@@ -289,7 +298,7 @@ handleInternalMsg m = do
           runRIO env $ forwardMsg winID (GLWindowFree winID)
 
       shutdown $ envCtx env -- explicitly close ZeroMQ context
-      exitSuccess
+      putMVar (envServerExit env) ()
 
 
 forwardMsg :: WindowID -> ExternalMsg -> RIO Env ()
