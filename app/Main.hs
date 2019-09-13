@@ -43,10 +43,8 @@ cmdLineOpts = CmdLineOpts
 main :: IO ()
 main = do
   opts <- execParser getOpts
-  if version opts then
-    putStrLn "scvid alpha"
-  else
-    runServer opts
+  if version opts then putStrLn "scvid alpha"
+                  else runServer opts
   where
     getOpts = info (cmdLineOpts <**> helper)
       ( fullDesc
