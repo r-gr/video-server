@@ -144,9 +144,9 @@ render = ask >>= \env -> liftIO $ do
 
   GL.currentProgram $= Just (rsScreenShader env)
 
-  let texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
   -- Unbind any texture units
-  let textureUnits' = map GL.TextureUnit [0..texUnitMax]
+  let texUnitMax    = (fromIntegral $ rsMaxTexUnits env) - 1
+      textureUnits' = map GL.TextureUnit [0..texUnitMax]
   forM_ textureUnits' $ \t -> do GL.activeTexture $= t
                                  GL.textureBinding GL.Texture2D $= Nothing
   GL.activeTexture $= GL.TextureUnit 0

@@ -297,6 +297,7 @@ handleInternalMsg m = do
         forM_ (IntMap.keys msgQs) $ \winID ->
           runRIO env $ forwardMsg winID (GLWindowFree winID)
 
+      putStrLn "*** Info: shutting down server"
       shutdown $ envCtx env -- explicitly close ZeroMQ context
       putMVar (envServerExit env) ()
 
