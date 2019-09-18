@@ -205,7 +205,10 @@ fsMain inputs output graph = graphCode graph
 {- Utility functions -}
 
 uniformName :: Int -> Int -> Int -> Text
-uniformName gID uID index = "in_Graph_"+|gID|+"_Unit_"+|uID|+"_"+|index|+""
+uniformName gID uID index =
+  -- It turns out that Fmt's String/Text building doesn't have great performance
+  -- so use Text.concat here since this function gets called a LOT.
+  Text.concat [ "in_Graph_", tshow gID, "_Unit_", tshow uID, "_", tshow index ]
 
 
 getShaderInputs :: Text -> [Text]

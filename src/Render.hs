@@ -64,6 +64,9 @@ render = ask >>= \env -> liftIO $ do
   buses <- readIORef $ wsBuses ws
 
   uniforms <- atomically $ STM.flushTBQueue $ wsUniformVals ws
+  -- The uniform updates for each node must be ordered with the newest updates
+  -- first and older updates later in the list. IntMap.fromListWith does this
+  -- for us.
   let uniformUpdates = IntMap.fromListWith (++)
                      $ map (\unitData -> (uDataNodeID unitData, [unitData])) uniforms
 
@@ -71,10 +74,6 @@ render = ask >>= \env -> liftIO $ do
   GL.bindFramebuffer GL.Framebuffer $= outBusFbo
   GL.clearNamedFramebuffer outBusFbo
     $ GL.ClearColorBufferFloat 0 $ GL.Color4 0.0 0.0 0.0 1.0
-
-  -- let texUnitMin = 1 -- (fromIntegral $ length inWires) + 1
-  --     texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
-  -- textureUnits <- newIORef $ map GL.TextureUnit [texUnitMin..texUnitMax]
 
   forM_ (recurseNodeTree nodeTree') $ \(nID, ShaderProgram shaderProgram inWires outWire) -> do
     GL.currentProgram $= Just shaderProgram
@@ -87,7 +86,7 @@ render = ask >>= \env -> liftIO $ do
     --        It might be possible to fix this by carefully working out how and
     --        when texture objects are bound to the texture units for the shader
     --        programs.
-    let texUnitMin = 1 -- (fromIntegral $ length inWires) + 1
+    let texUnitMin = 1
         texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
     textureUnits <- newIORef $ map GL.TextureUnit [texUnitMin..texUnitMax]
 
@@ -95,34 +94,12 @@ render = ask >>= \env -> liftIO $ do
                                   , ssTextureUnits  = textureUnits
                                   }
 
-    forM_ (fromMaybe [] $ IntMap.lookup nID uniformUpdates) $ \u -> do
-      let gID   = uDataNodeID u
-          uID   = uDataUnitID u
-          input = uDataInput u
-          name = uniformName gID uID input
+    -- Apply any updates to simple Float uniforms. The uniform updates must be
+    -- ordered with the newest updates first.
+    runRIO shaderState $
+      applyUniformUpdates [] (fromMaybe [] $ IntMap.lookup nID uniformUpdates)
 
-      -- TODO: note - this attempts to set every uniform for the node in each
-      --       shader program. may be quite wasteful if a node is split into
-      --       many shader programs.
-      --       Maybe a good solution is to store information about the graphs
-      --       and units in the shader program to allow a fast lookup by gID,
-      --       uID before attempting to set the uniform.
-      setFloatUniform shaderProgram name (uDataValue u)
-
-    -- unbind any texture units
-    -- let textureUnits' = map GL.TextureUnit [0..texUnitMax]
-    -- forM_ textureUnits' $ \t -> do GL.activeTexture $= t
-    --                                GL.textureBinding GL.Texture2D $= Nothing
-    -- GL.activeTexture $= GL.TextureUnit 0
-    -- (forM textureUnits' $ \t -> do GL.activeTexture $= t
-    --                                tb <- GL.get $ GL.textureBinding GL.Texture2D
-    --                                return (t, tb)) >>= pPrint
-
-    -- -- putStrLn ""
-    -- GL.activeTexture $= GL.TextureUnit 0
-
-    -- bind input bus(es) to texture units
-    -- putStrLn $ "*** Debug: inWires = " ++ (show inWires)
+    -- Bind input bus(es) to texture units
     forM_ inWires $ \wireID ->
       runRIO shaderState $ bindInputBus wireID $ buses Map.! (nID, wireID)
 
@@ -130,11 +107,11 @@ render = ask >>= \env -> liftIO $ do
     players <- readIORef $ wsPlayers ws
     delBufs <- readIORef $ wsDelBufs ws
 
-    -- TODO: note - this attempts to set every texture in every shader program
-    --       and silently fails for the cases that don't work. this is also
-    --       wasteful and a better solution should be devised.
-    --       Again, the above possible solution of looking up if the gID and uID
-    --       are in the shader program would work.
+    -- TODO: this attempts to set every texture in every shader program and
+    --       silently fails for the cases that don't work. This is wasteful and
+    --       a better solution should be devised.
+    --          Again, the possible solution of looking up if the uID is in the
+    --       shader program would work.
     runRIO shaderState $ forM_ (map snd . IntMap.toList $ images) displayImage
     players' <- runRIO shaderState $ forM (Map.toList $ players) $ \(k, p) ->
                   play p >>= \case Just p' -> return $ Just (k, p')
@@ -154,7 +131,7 @@ render = ask >>= \env -> liftIO $ do
     GL.bindVertexArrayObject $= Just (rsVAO env)
     GL.drawElements GL.Triangles 6 GL.UnsignedInt nullPtr
 
-  -- rotate the frames in the delay buffers to move them along by one
+  -- Rotate the frames in the delay buffers to move them along by one
   modifyIORef' (wsDelBufs ws) $ \dbs ->
                  dbs
                  |> IntMap.toList
@@ -168,7 +145,7 @@ render = ask >>= \env -> liftIO $ do
   GL.currentProgram $= Just (rsScreenShader env)
 
   let texUnitMax = (fromIntegral $ rsMaxTexUnits env) - 1
-  -- unbind any texture units
+  -- Unbind any texture units
   let textureUnits' = map GL.TextureUnit [0..texUnitMax]
   forM_ textureUnits' $ \t -> do GL.activeTexture $= t
                                  GL.textureBinding GL.Texture2D $= Nothing
@@ -183,6 +160,35 @@ render = ask >>= \env -> liftIO $ do
   GLFW.pollEvents
 
   return env
+  where
+    {- Note: the unit data list should be ordered with the newest updates first.
+
+       This function recurses through the list of updates for a certain node and
+       discards any updates for which a more recent update for that
+       (unitID, inputID) pair has already been applied.
+          Attempting to set a uniform is relatively costly so it is best to
+       avoid repeating the work unnecessarily.
+    -}
+    applyUniformUpdates :: [(UnitID, Int)] -> [UnitData] -> RIO ShaderState ()
+    applyUniformUpdates _done [] = return ()
+    applyUniformUpdates done (u:us) = let uID = uDataUnitID u; uIn = uDataInput u in
+      if elem (uID, uIn) done then
+        applyUniformUpdates done us
+      else do
+        let gID  = uDataNodeID u
+            name = uniformName gID uID uIn
+
+        shaderProgram <- ask >>= return . ssShaderProgram
+
+        -- TODO: this attempts to set the uniform regardless of whether it
+        --       exists within this shader program. Given that attempting to set
+        --       a uniform value is quite costly, it would be best to avoid
+        --       doing this unnecessarily.
+        --          Maybe a good solution is to store information about the
+        --       units in the shader program to allow a fast lookup by uID
+        --       before attempting to set the uniform.
+        liftIO $ setFloatUniform shaderProgram name (uDataValue u)
+        applyUniformUpdates ((uID, uIn) : done) us
 
 
 
