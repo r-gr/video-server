@@ -71,8 +71,8 @@ ghc-options:
   "$everything": -O2
 
 build:
-  library-profiling: true
-  executable-profiling: true
+  library-profiling: false
+  executable-profiling: false
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true
