@@ -276,10 +276,13 @@ data BasicPlayer = BasicPlayer
   , bpAssignment          :: Assignment
   , bpRate                :: TVar Double
   , bpLoop                :: TVar Bool
-  , bpStartTime           :: Maybe Double
+  , bpStartTime           :: TVar (Maybe Double)
   , bpOnDiskPlaybackTools :: Maybe OnDiskPlaybackTools
   , bpInMemPlaybackTools  :: Maybe InMemPlaybackTools
   }
+
+isOnDiskBasicPlayer :: BasicPlayer -> Bool
+isOnDiskBasicPlayer = isJust . bpOnDiskPlaybackTools
 
 -- TODO: This is pretty gross at the moment. Restructure more nicely, use
 --       shorter field and type names etc.
@@ -291,11 +294,13 @@ data OnDiskPlaybackTools = OnDiskPlaybackTools
   , odptFps           :: Double
   , odptTextureObject :: GL.TextureObject
   , odptCurrentFrame  :: Int
+  , odptFrameTS       :: Double
   }
 
 data InMemPlaybackTools = InMemPlaybackTools
   { imptFps           :: Double
   , imptCurrentFrame  :: Int
+  , imptFrameTS       :: Double
   }
 
 data PlaybackHead = PlaybackHead

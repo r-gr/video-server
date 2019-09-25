@@ -69,17 +69,18 @@ playbackHead player = ask >>= \env -> liftIO $
 
 basicPlayback :: BasicPlayer -> RIO ShaderState (Maybe BasicPlayer)
 basicPlayback player = do
+  startTime <- readTVarIO $ bpStartTime player
   if | isJust (bpOnDiskPlaybackTools player) -> continueOnDiskPlayback
-     | isOnDiskVid (bpVideo player)    -> beginOnDiskPlayback Nothing (0 :: Int)
-     | isJust (bpStartTime player)     -> continueInMemPlayback
-     | otherwise                       -> beginInMemPlayback (0 :: Int)
+     | isOnDiskVid (bpVideo player) -> beginOnDiskPlayback Nothing (0 :: Int)
+     | isJust startTime             -> continueInMemPlayback
+     | otherwise                    -> beginInMemPlayback (0 :: Int)
   where
     beginInMemPlayback :: Int -> RIO ShaderState (Maybe BasicPlayer)
     beginInMemPlayback startingFrame = do
       let (InMemVid _ videoData) = bpVideo player
           VideoData framesRef numFrames = videoData
       frames <- readIORef framesRef
-      let frameTObj = fst (frames V'.! startingFrame)
+      let (frameTObj, timestamp) = frames V'.! startingFrame
       success <- bindTexture frameTObj (bpAssignment player)
       if not success
         then return $ Just player
@@ -88,10 +89,9 @@ basicPlayback player = do
           -- Note: assumes constant frame rate. Incorrect behaviour for videos
           --       with variable frame rate, same for on-disk playback.
           let framerate = (fromIntegral numFrames) / (snd . V'.last) frames
-              playbackTools = InMemPlaybackTools framerate startingFrame
-          return $ Just $ player { bpStartTime = glCurrentTime
-                                 , bpInMemPlaybackTools = Just playbackTools
-                                 }
+              playbackTools = InMemPlaybackTools framerate startingFrame timestamp
+          atomically $ writeTVar (bpStartTime player) glCurrentTime
+          return $ Just $ player { bpInMemPlaybackTools = Just playbackTools }
 
     beginOnDiskPlayback :: Maybe GL.TextureObject -> Int -> RIO ShaderState (Maybe BasicPlayer)
     beginOnDiskPlayback mbTObj startingFrame = do
@@ -108,7 +108,7 @@ basicPlayback player = do
             frame <- liftIO $ odptNextFrame playbackTools
             case frame of
               Nothing -> return Nothing
-              Just (imageRGBA8, _timestamp) -> do
+              Just (imageRGBA8, timestamp) -> do
                 writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
 
                 success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
@@ -128,9 +128,12 @@ basicPlayback player = do
                       startTime     = (\t -> t - (skippedFrames * frameInterval))
                                    <$> glCurrentTime
 
+                  atomically $ writeTVar (bpStartTime player) startTime
                   return $ Just $
-                    player { bpStartTime     = startTime
-                           , bpOnDiskPlaybackTools = Just playbackTools
+                    player { bpOnDiskPlaybackTools = Just $
+                               playbackTools { odptCurrentFrame = startingFrame
+                                             , odptFrameTS = timestamp
+                                             }
                            }
 
     continueInMemPlayback :: RIO ShaderState (Maybe BasicPlayer)
@@ -138,9 +141,9 @@ basicPlayback player = do
       glCurrentTime <- liftIO GLFW.getTime
       rate <- readTVarIO $ bpRate player
       loop <- readTVarIO $ bpLoop player
+      startTime <- readTVarIO $ bpStartTime player
       let (InMemVid _ videoData) = bpVideo player
           playbackTools  = fromJust $ bpInMemPlaybackTools player
-          startTime      = bpStartTime player
           currentTime    = (-) <$> glCurrentTime <*> startTime
           framerate      = imptFps playbackTools
           frameInterval  = 1 / (framerate * rate)
@@ -159,29 +162,34 @@ basicPlayback player = do
          | (scheduledFrame > numFrames - 1) && (not loop) -> return Nothing
          | scheduledFrame > numFrames - 1 -> do -- loop back to start
              let currentFrame' = scheduledFrame `mod` numFrames
-                 (frameTObj, _) = frames V'.! currentFrame'
+                 (frameTObj, timestamp) = frames V'.! currentFrame'
              success <- bindTexture frameTObj (bpAssignment player)
              let startTime' = (\t -> t - ((fromIntegral currentFrame') * frameInterval))
                            <$> glCurrentTime
+             atomically $ writeTVar (bpStartTime player) startTime'
              if not success
                then return $ Just
-                           $ player { bpStartTime = startTime'
-                                    , bpInMemPlaybackTools = Just $
-                                        playbackTools { imptCurrentFrame = 0 }
+                           $ player { bpInMemPlaybackTools = Just $
+                                        playbackTools { imptCurrentFrame = 0
+                                                      , imptFrameTS = timestamp
+                                                      }
                                     }
                else return $ Just
-                           $ player { bpStartTime = startTime'
-                                    , bpInMemPlaybackTools = Just $
-                                        playbackTools { imptCurrentFrame = currentFrame' }
+                           $ player { bpInMemPlaybackTools = Just $
+                                        playbackTools { imptCurrentFrame = currentFrame'
+                                                      , imptFrameTS = timestamp
+                                                      }
                                     }
          | otherwise -> do
-             let (frameTObj, _) = frames V'.! scheduledFrame
+             let (frameTObj, timestamp) = frames V'.! scheduledFrame
              success <- bindTexture frameTObj (bpAssignment player)
              if not success
                then return $ Just player
                else return $ Just
                            $ player { bpInMemPlaybackTools = Just $
-                                        playbackTools { imptCurrentFrame = scheduledFrame }
+                                        playbackTools { imptCurrentFrame = scheduledFrame
+                                                      , imptFrameTS = timestamp
+                                                      }
                                     }
 
     continueOnDiskPlayback :: RIO ShaderState (Maybe BasicPlayer)
@@ -189,8 +197,8 @@ basicPlayback player = do
       glCurrentTime <- liftIO GLFW.getTime
       rate <- readTVarIO $ bpRate player
       loop <- readTVarIO $ bpLoop player
+      startTime <- readTVarIO $ bpStartTime player
       let playbackTools  = fromJust $ bpOnDiskPlaybackTools player
-          startTime      = bpStartTime player
           currentTime    = (-) <$> glCurrentTime <*> startTime
           framerate      = odptFps playbackTools
           frameInterval  = 1 / (framerate * rate)
@@ -212,7 +220,7 @@ basicPlayback player = do
              frame <- liftIO $ odptNextFrame playbackTools
              case frame of
                Nothing -> maybeLoopVideo skipResults loop (odptTextureObject playbackTools)
-               Just (imageRGBA8, _timestamp) -> do
+               Just (imageRGBA8, timestamp) -> do
                  liftIO $ writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
 
                  success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
@@ -221,7 +229,9 @@ basicPlayback player = do
                    then return $ Just player
                    else return $ Just $
                      player { bpOnDiskPlaybackTools = Just $
-                                playbackTools { odptCurrentFrame = scheduledFrame }
+                                playbackTools { odptCurrentFrame = scheduledFrame
+                                              , odptFrameTS = timestamp
+                                              }
                             }
 
     maybeLoopVideo :: [Bool] -> Bool -> GL.TextureObject -> RIO ShaderState (Maybe BasicPlayer)
@@ -297,6 +307,7 @@ setupPlayback mbTObj video = runExceptT $ do
                                , odptFps = framerate
                                , odptTextureObject = textureObject
                                , odptCurrentFrame = 0
+                               , odptFrameTS = 0.0
                                }
 
 

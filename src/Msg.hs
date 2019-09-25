@@ -7,6 +7,7 @@ module Msg
 
 import MyPrelude
 import RIO
+import RIO.Partial
 import qualified RIO.Map as Map
 import qualified RIO.Seq as Seq
 
@@ -110,7 +111,10 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
           uIn   = fromIntegral uIn16   :: Int
           vidID = fromIntegral vidID32 :: Int
           vLoop = vLoop32 /= (0 :: Int32)
-          vRate = realToFrac vRateF    :: Double
+          vRate = if vRateF <= 0
+                    -- set minimum rate value to prevent div by 0
+                    then 0.000000000001
+                    else realToFrac vRateF :: Double
           assignment = (gID, uID, uIn)
 
       players' <- readIORef players
@@ -121,11 +125,30 @@ receiveDataMsg = ask >>= \env -> liftIO $ do
         Just _  ->
           case Map.lookup assignment players' of
             Just (PlayVid bp) -> if getVideoID bp == vidID
-              then do
-                atomically $ writeTVar (bpRate bp) vRate
-                atomically $ writeTVar (bpLoop bp) vLoop
+              then if | isOnDiskBasicPlayer bp -> updateOnDiskBP bp vRate vLoop
+                      | otherwise ->              updateInMemBP  bp vRate vLoop
               else pushUpdate updateQueue $ WUPlayVid vidID assignment vRate vLoop
             _ ->   pushUpdate updateQueue $ WUPlayVid vidID assignment vRate vLoop
+      where
+        -- update video start time to account for the changed playback rate
+        updateOnDiskBP bp r' loop = do
+          mbt0 <- readTVarIO $ bpStartTime bp
+          r    <- readTVarIO $ bpRate bp
+          let pts = fromJust $ bpOnDiskPlaybackTools bp
+              ti  = odptFrameTS pts
+              t0' = (\t0 -> t0 - ti * (r' - r)) <$> mbt0
+          atomically $ do writeTVar (bpStartTime bp) t0'
+                          writeTVar (bpRate bp) r'
+                          writeTVar (bpLoop bp) loop
+        updateInMemBP bp r' loop = do
+          mbt0 <- readTVarIO $ bpStartTime bp
+          r    <- readTVarIO $ bpRate bp
+          let pts = fromJust $ bpInMemPlaybackTools bp
+              ti  = imptFrameTS pts
+              t0' = (\t0 -> t0 - ti * (r' - r)) <$> mbt0
+          atomically $ do writeTVar (bpStartTime bp) t0'
+                          writeTVar (bpRate bp) r'
+                          writeTVar (bpLoop bp) loop
 
 
     AssignImageMsg (RawAssignImage uIn16 gID32 uID32 imgID32) -> do

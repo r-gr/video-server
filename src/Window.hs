@@ -452,11 +452,12 @@ applyUpdates = do
     addBasicPlayer players video assignment vRate vLoop = do
       rate <- newTVarIO vRate
       loop <- newTVarIO vLoop
+      startTime <- newTVarIO Nothing
       let player = PlayVid $ BasicPlayer { bpVideo = video
                                          , bpAssignment = assignment
                                          , bpRate = rate
                                          , bpLoop = loop
-                                         , bpStartTime = Nothing
+                                         , bpStartTime = startTime
                                          , bpOnDiskPlaybackTools = Nothing
                                          , bpInMemPlaybackTools = Nothing
                                          }
@@ -486,13 +487,14 @@ findPlayersByGphID graphID players =
 resetPlayers :: (Map Assignment Player, [(Assignment, Player)]) -> IO (Map Assignment Player)
 resetPlayers (playersMap, playersToReset) = do
   let basicPlayers = playersToReset |> filter (\(_, p) -> isPlayVid p) |> map (\(_, PlayVid bp) -> bp)
-  freedBasicPlayers <- forM basicPlayers $ \bp ->
+  freedBasicPlayers <- forM basicPlayers $ \bp -> do
+    startTime <- newTVarIO Nothing
     case bpOnDiskPlaybackTools bp of
-      Nothing  -> return $ bp { bpStartTime = Nothing, bpInMemPlaybackTools = Nothing }
+      Nothing  -> return $ bp { bpStartTime = startTime, bpInMemPlaybackTools = Nothing }
       Just pts -> do odptCleanupFFmpeg pts
                      return $ bp { bpOnDiskPlaybackTools = Nothing
                                  , bpInMemPlaybackTools = Nothing
-                                 , bpStartTime = Nothing
+                                 , bpStartTime = startTime
                                  }
   return $ foldr (\bp m -> Map.insert (bpAssignment bp) (PlayVid bp) m) playersMap freedBasicPlayers
 
