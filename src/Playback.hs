@@ -95,8 +95,10 @@ basicPlayback player = do
 
     beginOnDiskPlayback :: Maybe GL.TextureObject -> Int -> RIO ShaderState (Maybe BasicPlayer)
     beginOnDiskPlayback mbTObj startingFrame = do
-      textureBindable <- canBindTexture (bpAssignment player)
-      if not textureBindable then return $ Just player else ask >>= \env -> liftIO $ do
+      mbTexLocation <- getUniformLocation (bpAssignment player)
+      if isNothing mbTexLocation then
+        return $ Just player
+      else ask >>= \env -> liftIO $ do
         let (OnDiskVid video) = bpVideo player
         eitherPlaybackTools <- liftIO $ setupPlayback mbTObj video
         case eitherPlaybackTools of
@@ -111,8 +113,8 @@ basicPlayback player = do
               Just (imageRGBA8, _timestamp) -> do
                 writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
 
-                success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
-                                                    (bpAssignment player)
+                success <- runRIO env $ bindTexture' (odptTextureObject playbackTools)
+                                                     (fromJust mbTexLocation)
 
                 if not success then
                   -- Note: This shouldn't happen because it is checked above
@@ -150,17 +152,17 @@ basicPlayback player = do
           numFrames      = vNumFrames videoData
 
       frames <- readIORef framesRef
-      textureBindable <- canBindTexture (bpAssignment player)
+      mbTexLocation <- getUniformLocation (bpAssignment player)
 
-      if | not textureBindable            -> return $ Just player
+      if | isNothing mbTexLocation          -> return $ Just player
          | scheduledFrame <= currentFrame -> do
-             _ <- bindTexture (fst $ frames V'.! currentFrame) (bpAssignment player)
+             _ <- bindTexture' (fst $ frames V'.! currentFrame) (fromJust mbTexLocation)
              return $ Just player
          | (scheduledFrame > numFrames - 1) && (not loop) -> return Nothing
          | scheduledFrame > numFrames - 1 -> do -- loop back to start
              let currentFrame' = scheduledFrame `mod` numFrames
                  (frameTObj, _) = frames V'.! currentFrame'
-             success <- bindTexture frameTObj (bpAssignment player)
+             success <- bindTexture' frameTObj (fromJust mbTexLocation)
              let startTime' = (\t -> t - ((fromIntegral currentFrame') * frameInterval))
                            <$> glCurrentTime
              if not success
@@ -176,7 +178,7 @@ basicPlayback player = do
                                     }
          | otherwise -> do
              let (frameTObj, _) = frames V'.! scheduledFrame
-             success <- bindTexture frameTObj (bpAssignment player)
+             success <- bindTexture' frameTObj (fromJust mbTexLocation)
              if not success
                then return $ Just player
                else return $ Just
@@ -197,11 +199,11 @@ basicPlayback player = do
           scheduledFrame = fromMaybe 0 $ floor <$> (/ frameInterval) <$> currentTime
           currentFrame   = odptCurrentFrame playbackTools
 
-      textureBindable <- canBindTexture (bpAssignment player)
+      mbTexLocation <- getUniformLocation (bpAssignment player)
 
-      if | not textureBindable            -> return $ Just player
+      if | isNothing mbTexLocation          -> return $ Just player
          | scheduledFrame <= currentFrame -> do
-             _ <- bindTexture (odptTextureObject playbackTools) (bpAssignment player)
+             _ <- bindTexture' (odptTextureObject playbackTools) (fromJust mbTexLocation)
              return $ Just player
          | otherwise -> do
              let skippedFrames = scheduledFrame - currentFrame - 1
@@ -215,8 +217,8 @@ basicPlayback player = do
                Just (imageRGBA8, _timestamp) -> do
                  liftIO $ writeImageToTexture (odptTextureObject playbackTools) imageRGBA8
 
-                 success <- runRIO env $ bindTexture (odptTextureObject playbackTools)
-                                                     (bpAssignment player)
+                 success <- runRIO env $ bindTexture' (odptTextureObject playbackTools)
+                                                      (fromJust mbTexLocation)
                  if not success
                    then return $ Just player
                    else return $ Just $

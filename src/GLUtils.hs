@@ -9,9 +9,11 @@ module GLUtils
   , setFloatUniform
   , bindInputBus
   , bindTexture
+  , bindTexture'
   , setupTexture
   , writeImageToTexture
-  , canBindTexture
+  -- , canBindTexture
+  , getUniformLocation
   ) where
 
 
@@ -374,8 +376,52 @@ bindTexture textureObject (gID, uID, uIn) = ask >>= \env -> liftIO $ do
       else return False
 
 
+
+{- bindTexture' takes the uniform location instead of the assignment to avoid
+   constructing the uniform name string and looking it up in the shader program
+   again. This can be used whenever the uniform location will have already been
+   looked up such as when checking if a texture can be bound in that shader
+   program. Since this is a major cost centre (run extremely often in the
+   execution of the program), it is a worthwhile optimisation.
+-}
+bindTexture' :: GL.TextureObject -> GL.UniformLocation -> RIO ShaderState Bool
+bindTexture' textureObject texLocation = ask >>= \env -> liftIO $ do
+  texUnits <- readIORef $ ssTextureUnits env
+  case texUnits of
+    [] -> do
+      putStrLn "*** Error: not enough texture units available to display image/video."
+      return False
+    (t:ts) -> do
+      if texLocation >= (GL.UniformLocation 0) then do
+        GL.currentProgram $= Just (ssShaderProgram env)
+        -- putStrLn $ "*** Debug: bindTexture "+||textureObject||+" using "+||t||+""
+        -- bind texture
+        GL.activeTexture $= t
+        GL.textureBinding GL.Texture2D $= Just textureObject
+        -- set the uniform location to this texture unit
+        GL.uniform texLocation $= t
+        -- set active texture back to default
+        GL.activeTexture $= GL.TextureUnit 0
+        -- update the available texture units
+        writeIORef (ssTextureUnits env) ts
+        return True
+
+      else return False
+
+
+
 canBindTexture :: Assignment -> RIO ShaderState Bool
 canBindTexture (gID, uID, uIn) = ask >>= \env -> liftIO $ do
   let uniform = Text.unpack $ uniformName gID uID uIn
   texLocation <- GL.uniformLocation (ssShaderProgram env) uniform
   return $ texLocation >= (GL.UniformLocation 0)
+
+
+
+getUniformLocation :: Assignment -> RIO ShaderState (Maybe GL.UniformLocation)
+getUniformLocation (gID, uID, uIn) = ask >>= \env -> liftIO $ do
+  let uniform = Text.unpack $ uniformName gID uID uIn
+  location <- GL.uniformLocation (ssShaderProgram env) uniform
+  if location >= (GL.UniformLocation 0)
+    then return $ Just location
+    else return Nothing
