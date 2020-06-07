@@ -1,5 +1,11 @@
 # video-server
 
+- [What?](#what-is-it)
+- [Why?](#why-is-it)
+- [How?](#how-is-it)
+- [Building and installation](#building-and-installation)
+- [Technical details](#what-is-it-the-full-technical-description)
+
 ## What is it?
 
 ### as a short description
@@ -46,6 +52,18 @@ It exists
 ## How is it?
 
 It's doing well, thanks.
+
+## Building and installation
+
+To build the video server, you need the [Haskell tool
+Stack](https://docs.haskellstack.org/en/stable/README/) installed.
+
+Download this repository's source code, then in the root folder of the
+repository, run:
+
+```
+$ stack install
+```
 
 ## What is it? The full technical description.
 
