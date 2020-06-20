@@ -5,6 +5,7 @@
 - [How?](#how-is-it)
 - [Building and installation](#building-and-installation)
 - [Technical details](#what-is-it-the-full-technical-description)
+- [Contributing](#contributing)
 
 ## What is it?
 
@@ -29,9 +30,10 @@ Jitter.
 
 A standalone program which receives messages over IPC or TCP sockets telling the
 program what video synthesis, video playback, or video transformation operations
-to perform, which it outputs to a window. The parameters of these operations can
-be received at a very high rate with low latency, meaning that audio signals (or
-other high rate data sources) can be used to control the parameters.
+to perform, the result of which it outputs to a window. The parameters of these
+operations can be received at a very high rate with low latency, meaning that
+audio signals (or other high rate data sources) can be used to control the
+parameters.
 
 It uses the FFmpeg library to read a large range of video formats and uses
 OpenGL to utilise GPU hardware to perform video operations.
@@ -51,19 +53,40 @@ It exists
 
 ## How is it?
 
-It's doing well, thanks.
+It's doing well thanks.
 
 ## Building and installation
 
-To build the video server, you need the [Haskell tool
-Stack](https://docs.haskellstack.org/en/stable/README/) installed.
+To build the video server you need the [Haskell tool
+Stack](https://docs.haskellstack.org/en/stable/README/) installed. There are
+also a few libraries on which it depends such as [ZeroMQ
+4.x](https://zeromq.org/), [FFmpeg](https://ffmpeg.org/) and
+[GLFW](https://www.glfw.org/) -- these will need to be installed in a location
+the compiler can find (on Linux, installing them with the system package manager
+should work).
 
 Download this repository's source code, then in the root folder of the
-repository, run:
+repository, run
 
 ```
 $ stack install
 ```
+
+This will build the executable and copy it to your [_'local bin
+path'_](https://docs.haskellstack.org/en/stable/GUIDE/#install-and-copy-bins),
+which is most likely `~/.local/bin/` on Linux or macOS. Stack will state where
+it copies the executable to when the build finishes but you can also find out
+your _'local bin path'_ by running
+
+```
+$ stack path --local-bin
+```
+
+I have only tested this on Linux so far but it may run on macOS -- I'll check at
+some point, potentially make some modifications to make it compatible, and
+update this README. It might build on Windows since it doesn't rely heavily on
+Unix/POSIX-isms but I haven't tested it and probably won't any time soon (anyone
+reading this is welcome to try though).
 
 ## What is it? The full technical description.
 
@@ -110,3 +133,7 @@ The UGens are implemented as GLSL (OpenGL Shading Language) fragment shader
 functions so the existing set of UGens can be easily extended. When using
 SuperCollider-AV to control the video server, corresponding UGen classes exist
 in sclang.
+
+## Contributing
+
+GitHub issues (for feature requests, bugs, etc.) and pull requests welcome.

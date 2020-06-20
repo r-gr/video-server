@@ -55,7 +55,7 @@ library:
   source-dirs: src
 
 executables:
-  video-server-exe:
+  video-server:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
