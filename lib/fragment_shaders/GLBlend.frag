@@ -25,33 +25,33 @@ vec4 GLBlend(vec4 backdrop, vec4 source, float blendModeF, float mixVal)
             break;
         case 5: // colour dodge
             result = vec4(
-                cs.r < 1 ? min(1, cb.r / (1 - cs.r)) : 1,
-                cs.g < 1 ? min(1, cb.g / (1 - cs.g)) : 1,
-                cs.b < 1 ? min(1, cb.b / (1 - cs.b)) : 1,
+                cs.r < 1.0 ? min(1.0, cb.r / (1.0 - cs.r)) : 1.0,
+                cs.g < 1.0 ? min(1.0, cb.g / (1.0 - cs.g)) : 1.0,
+                cs.b < 1.0 ? min(1.0, cb.b / (1.0 - cs.b)) : 1.0,
                 alpha
             );
             break;
         case 6: // colour burn
             result = vec4(
-                cs.r > 0 ? 1 - min(1, (1 - cb.r) / cs.r) : 1,
-                cs.g > 0 ? 1 - min(1, (1 - cb.g) / cs.g) : 1,
-                cs.b > 0 ? 1 - min(1, (1 - cb.b) / cs.b) : 1,
+                cs.r > 0 ? 1.0 - min(1.0, (1.0 - cb.r) / cs.r) : 1.0,
+                cs.g > 0 ? 1.0 - min(1.0, (1.0 - cb.g) / cs.g) : 1.0,
+                cs.b > 0 ? 1.0 - min(1.0, (1.0 - cb.b) / cs.b) : 1.0,
                 alpha
             );
             break;
         case 7: // hard light
             result = vec4(
-                cs.r <= 0.5 ? cb.r * (2 * cs.r) : cb.r + (2 * cs.r - 1) - (cb.r * (2 * cs.r - 1)),
-                cs.g <= 0.5 ? cb.g * (2 * cs.g) : cb.g + (2 * cs.g - 1) - (cb.g * (2 * cs.g - 1)),
-                cs.b <= 0.5 ? cb.b * (2 * cs.b) : cb.b + (2 * cs.b - 1) - (cb.b * (2 * cs.b - 1)),
+                cs.r <= 0.5 ? cb.r * (2.0 * cs.r) : cb.r + (2.0 * cs.r - 1.0) - (cb.r * (2.0 * cs.r - 1.0)),
+                cs.g <= 0.5 ? cb.g * (2.0 * cs.g) : cb.g + (2.0 * cs.g - 1.0) - (cb.g * (2.0 * cs.g - 1.0)),
+                cs.b <= 0.5 ? cb.b * (2.0 * cs.b) : cb.b + (2.0 * cs.b - 1.0) - (cb.b * (2.0 * cs.b - 1.0)),
                 alpha
             );
             break;
         case 8: // overlay
             result = vec4(
-                cb.r <= 0.5 ? cs.r * (2 * cb.r) : cs.r + (2 * cb.r - 1) - (cs.r * (2 * cb.r - 1)),
-                cb.g <= 0.5 ? cs.g * (2 * cb.g) : cs.g + (2 * cb.g - 1) - (cs.g * (2 * cb.g - 1)),
-                cb.b <= 0.5 ? cs.b * (2 * cb.b) : cs.b + (2 * cb.b - 1) - (cs.b * (2 * cb.b - 1)),
+                cb.r <= 0.5 ? cs.r * (2.0 * cb.r) : cs.r + (2.0 * cb.r - 1.0) - (cs.r * (2.0 * cb.r - 1.0)),
+                cb.g <= 0.5 ? cs.g * (2.0 * cb.g) : cs.g + (2.0 * cb.g - 1.0) - (cs.g * (2.0 * cb.g - 1.0)),
+                cb.b <= 0.5 ? cs.b * (2.0 * cb.b) : cs.b + (2.0 * cb.b - 1.0) - (cs.b * (2.0 * cb.b - 1.0)),
                 alpha
             );
             break;
@@ -64,7 +64,7 @@ vec4 GLBlend(vec4 backdrop, vec4 source, float blendModeF, float mixVal)
             );
             break;
         case 10: // exclusion
-            result = vec4(cb + cs - (2 * cb * cs), alpha);
+            result = vec4(cb + cs - (2.0 * cb * cs), alpha);
             break;
         default:
             mix(backdrop, result, 0.5);

@@ -1,73 +1,43 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module GLUtils
-    ( withWindow
-    , processInput
-    , compileShaderProgram
-    , initialiseFFmpeg
-    , newImageTexture
-    , newVideoTexture
-    , newLoadedVideo
-    , setupGeometry
-    , setupFramebuffer
-    -- , setupTexture
-    -- , deleteTexture
-    , setFloatUniform
-    , updateTextures
-    , freeTexture
-    ) where
+  ( processInput
+  , compileShaderProgram
+  , newImageTexture
+  , freeVideoResources
+  , setupGeometry
+  , setupFramebuffer
+  , loadVideo
+  , setFloatUniform
+  , bindInputBus
+  , bindTexture
+  , bindTexture'
+  , setupTexture
+  , writeImageToTexture
+  -- , canBindTexture
+  , getUniformLocation
+  ) where
 
+
+import MyPrelude
+import RIO
+import RIO.Partial
+import RIO.List.Partial
+import qualified RIO.Text as Text
 
 import qualified Codec.FFmpeg as F
-import Codec.FFmpeg.Juicy (JuicyPixelFormat)
 import Codec.Picture
-import Control.Monad
-import Control.Monad.Loops (forkMapM, whileM)
+import Control.Monad.Loops (whileM)
 import Data.ByteString (ByteString)
-import Data.IORef
-import Data.Maybe (isJust, fromJust, isNothing, fromMaybe)
-import Data.ObjectName
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as SV
-import Fmt
 import Foreign.Marshal.Array (withArray)
 import Foreign.Ptr (nullPtr, plusPtr)
 import Foreign.Storable (sizeOf)
 import Graphics.Rendering.OpenGL (($=))
-import Graphics.GL.Functions (glDeleteTextures)
-import Graphics.GL.Types (GLsizei)
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 
 import Shader (uniformName)
-import Texture
-import Window
-
-
-withWindow :: Int -> Int -> String -> (GLFW.Window -> IO ()) -> IO ()
-withWindow width height title fn = do
-  successfulInit <- GLFW.init
-  if not successfulInit
-    then do
-      putStrLn "*** Error: couldn't initialise GLFW context"
-    else do
-      GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 4
-      GLFW.windowHint $ GLFW.WindowHint'ContextVersionMinor 3
-      GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
-      -- GLFW.windowHint $ GLFW.WindowHint'RefreshRate $ Just 240
-
-      window <- GLFW.createWindow width height ("scsynth-video '" ++ title ++ "'") Nothing Nothing
-      case window of
-        Nothing -> do
-          GLFW.terminate
-          putStrLn "*** Error: couldn't create GLFW window"
-        Just w -> do
-          GLFW.makeContextCurrent window
-          GLFW.setFramebufferSizeCallback w $ Just framebufferSizeCallback
-          fn w
-          putStrLn $ "*** Info: Window '"+|title|+"' - Closing GLFW context"
-          GLFW.destroyWindow w
-          GLFW.terminate
+import Types
 
 
 processInput :: GLFW.Window -> Maybe GLFW.Monitor -> GLFW.VideoMode -> IORef Bool -> IO ()
@@ -88,11 +58,6 @@ processInput window monitor videoMode isFullscreen = do
           Just mon -> GLFW.setFullscreen window mon videoMode
           Nothing  -> return ()
     writeIORef isFullscreen $ not fullscreen
-
-
-framebufferSizeCallback :: GLFW.FramebufferSizeCallback
-framebufferSizeCallback _window width height =
-  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
 
 
 compileShaderProgram :: ByteString -> ByteString -> IO GL.Program
@@ -150,12 +115,12 @@ setupGeometry = do
       vertexSize      = fromIntegral $ sizeOf (head vertices)
       numVertices     = fromIntegral $ length vertices
       vertexArraySize = fromIntegral $ numVertices * vertexSize
-      numIndices      = fromIntegral $ length indices
+      numIndices      = length indices
       indexArraySize  = fromIntegral $ numIndices * sizeOf (head indices)
 
-  vao <- genObjectName
-  vbo <- genObjectName
-  ebo <- genObjectName
+  vao <- GL.genObjectName
+  vbo <- GL.genObjectName
+  ebo <- GL.genObjectName
 
   GL.bindVertexArrayObject $= Just vao
 
@@ -195,15 +160,19 @@ setupGeometry = do
 
 setupFramebuffer :: Int-> Int -> IO (GL.FramebufferObject, GL.TextureObject)
 setupFramebuffer width height = do
-  framebuffer <- genObjectName :: IO (GL.FramebufferObject)
+  framebuffer <- GL.genObjectName :: IO (GL.FramebufferObject)
   GL.bindFramebuffer GL.Framebuffer $= framebuffer
 
+  GL.activeTexture $= GL.TextureUnit 0
   -- create a color attachment texture
-  textureColorbuffer <- genObjectName
+  textureColorbuffer <- GL.genObjectName
   GL.textureBinding GL.Texture2D $= Just textureColorbuffer
-  GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGB'
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
+  GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGBA'
     (GL.TextureSize2D (fromIntegral width) (fromIntegral height)) 0
-    (GL.PixelData GL.RGB GL.UnsignedByte nullPtr)
+    (GL.PixelData GL.RGBA GL.UnsignedByte nullPtr)
   GL.textureFilter GL.Texture2D $= ((GL.Linear', Nothing), GL.Linear')
   GL.framebufferTexture2D GL.Framebuffer (GL.ColorAttachment 0)
     GL.Texture2D textureColorbuffer 0
@@ -211,30 +180,27 @@ setupFramebuffer width height = do
   fbStatus <- GL.framebufferStatus GL.Framebuffer
   if fbStatus /= GL.Complete then
     putStrLn "*** Errror: Framebuffer is not complete"
+    -- TODO: actually deal with this case where the framebuffer isn't complete
+    --       for whatever reason.
   else return ()
 
+  GL.bindFramebuffer GL.Framebuffer $= GL.defaultFramebufferObject
   return (framebuffer, textureColorbuffer)
 
---  fbStatus <- GL.framebufferStatus GL.Framebuffer
---  if fbStatus /= GL.Complete then do
---    --deleteObjectName framebuffer
---	--deleteObjectName textureColorbuffer
---    return $ Left "Framebuffer is not complete"
---  else do
---	  return $ Right (framebuffer, textureColorbuffer)
 
 
-setFloatUniform :: GL.Program -> String -> Float -> IO ()
+setFloatUniform :: GL.Program -> Text -> Float -> IO ()
 setFloatUniform shaderProgram uName floatValue = do
-  uniformLoc <- GL.get $ GL.uniformLocation shaderProgram uName
-  GL.uniform uniformLoc $= floatValue
+  uniformLoc <- GL.get $ GL.uniformLocation shaderProgram $ Text.unpack uName
+  if uniformLoc >= (GL.UniformLocation 0) then do
+    GL.uniform uniformLoc $= floatValue
+  else do
+    -- putStrLn $ "*** DEBUG: uniform "+|uName|+" is not in this shader program ("+||shaderProgram||+")"
+    return ()
 
 
 
-{- *** Textures, images and videos ***  -}
-
-
-initialiseFFmpeg :: FilePath -> IO ( FrameGrabber PixelRGB8, IO () )
+initialiseFFmpeg :: FilePath -> IO ( FrameGrabber PixelRGBA8, IO () )
 initialiseFFmpeg videoFile = do
   -- putStrLn $ "*** Info: Initialising FFmpeg for \"" ++ videoFile ++ "\""
   F.initFFmpeg
@@ -242,477 +208,220 @@ initialiseFFmpeg videoFile = do
   return (getNextFrame, cleanupFFmpeg)
 
 
-newImageTexture :: Int -> FilePath -> IO (Either String Texture)
-newImageTexture imgID iPath = do
-  {- Use the first half of the texture ID space for video textures. The maximum
-     number of texture image units available to the fragment shader varies based
-     on hardware and is retrieved by the GL.maxTextureImageUnits function.
-  -}
-  maxTexUnits <- GL.maxTextureImageUnits
-  -- putStrLn $ "*** Debug: maxTexUnits = "+|maxTexUnits|+""
-  -- texture unit 0 is the previous frame texture
-  let textureID  = imgID + 1
-      maxImageID = ((fromIntegral maxTexUnits :: Int) `div` 2) - 1
 
-  if imgID > maxImageID || imgID < 0 then
-    return $ Left $ concat [ "image ID is outside of the range allowed by the hardware. "
-                           , "The range of possible image IDs is 0 to "
-                           , show maxImageID
-                           ]
-  else do
-    result <- readImage iPath
-    case result of
-      Left str ->
-        return $ Left $ "could not load image at \""+|iPath|+"\": "+|str|+""
-      Right dynamicImg -> do
-        (textureObject, textureUnit) <- setupTexture textureID
-        -- putStrLn $ "*** Debug:: new image texture ID = "+|textureID|+""
-        return $ Right
-               $ Img $ ImageTexture { iTexObj      = textureObject
-                                    , iTexUnit     = textureUnit
+newImageTexture :: Int -> FilePath -> IO (Either String ImageTexture)
+newImageTexture imgID iPath = do
+  result <- readImage iPath
+  case result of
+    Left str ->
+      return $ Left $ "could not load image at \""+|iPath|+"\": "+|str|+""
+    Right dynamicImg -> do
+      textureObject <- setupTexture
+      let imageRGBA8 = convertRGBA8 dynamicImg
+      writeImageToTexture textureObject imageRGBA8
+      putStrLn $ "*** Debug: new image texture ID = "+|imgID|+""
+      return $ Right $ ImageTexture { iTexObj      = textureObject
                                     , iAssignments = []
-                                    , iID          = textureID
-                                    , iImageRGB8   = convertRGB8 dynamicImg
-                                    , iIsBound     = False
+                                    , iID          = imgID
                                     }
 
 
-newVideoTexture :: Int -> FilePath -> Float -> Bool -> IO (Either String Texture)
-newVideoTexture vidID vPath vPlaybackRate vShouldLoop = do
-  {- Use the second half of the texture ID space for video textures. The maximum
-     number of texture image units available to the fragment shader varies based
-     on hardware and is retrieved by the GL.maxTextureImageUnits function.
-  -}
-  maxTexUnits <- GL.maxTextureImageUnits
-  -- texture unit 0 is the previous frame texture
-  let textureID  = ((fromIntegral maxTexUnits :: Int) `div` 2) + vidID + 1
-      maxVideoID = ((fromIntegral maxTexUnits :: Int) `div` 2) - 2
-  -- putStrLn $ "*** Debug: maxTexUnits = "+|maxTexUnits|+""
 
-  if vidID > maxVideoID || vidID < 0 then
-    return $ Left $ concat [ "video ID is outside of the range allowed by the hardware. "
-                           , "The range of possible video IDs is 0 to "
-                           , show maxVideoID
-                           ]
-  else do
-    putStrLn $ "*** Info: Initialising FFmpeg for \"" ++ vPath ++ "\""
-    (getFrame, cleanup) <- initialiseFFmpeg vPath
-    (textureObject, textureUnit) <- setupTexture textureID
-    -- putStrLn $ "*** Debug:: new video texture ID = "+|textureID|+""
-    return $ Right
-           $ Vid $ VideoTexture { vTexObj        = textureObject
-                                , vTexUnit       = textureUnit
-                                , vAssignments   = []
-                                , vID            = vidID
-                                , vLoop          = vShouldLoop
-                                , vFilePath      = vPath
-                                , vNextFrame     = getFrame
-                                , vCleanupFFmpeg = cleanup
-                                , vStartTime     = Nothing
-                                , vCurrentFrame  = (-1)
-                                , vFps           = Nothing
-                                , vRate          = realToFrac vPlaybackRate :: Double
-                                }
+freeVideoResources :: Video -> IO ()
+freeVideoResources = \case
+  InMemVid _ videoData -> do frames <- readIORef (vFrames videoData)
+                             V.forM_ frames $ GL.deleteObjectName . fst
+  _ -> return ()
 
 
-newLoadedVideo :: Int -> FilePath -> Float -> Bool -> IO (Either String Texture)
-newLoadedVideo vidID vPath vPlaybackRate vShouldLoop = do
-  {- Use the second half of the texture ID space for video textures. The maximum
-     number of texture image units available to the fragment shader varies based
-     on hardware and is retrieved by the GL.maxTextureImageUnits function.
-  -}
-  maxTexUnits <- GL.maxTextureImageUnits
-  let textureID = ((fromIntegral maxTexUnits :: Int) `div` 2) + vidID
-      maxVideoID = ((fromIntegral maxTexUnits :: Int) `div` 2) - 1
-  -- putStrLn $ "*** Debug: maxTexUnits = "+|maxTexUnits|+""
 
-  if vidID > maxVideoID || vidID < 0 then
-    return $ Left $ concat [ "video ID is outside of the range allowed by the hardware. "
-                           , "The range of possible video IDs is 0 to "
-                           , show maxVideoID
-                           ]
-  else do
-    (getFrame, cleanup) <- initialiseFFmpeg vPath
-    let textureUnit = (GL.TextureUnit (fromIntegral textureID :: GL.GLuint))
-    putStrLn $ "*** Info: loading video frames as texture objects for \"" ++ vPath ++ "\""
-    frames <- loadVideo getFrame cleanup
-    -- putStrLn $ "*** Debug:: new video texture ID = "+|textureID|+""
-    return $ Right
-           $ LVd $ LoadedVideo { lvTexUnit       = textureUnit
-                               , lvAssignments   = []
-                               , lvID            = vidID
-                               , lvLoop          = vShouldLoop
-                               , lvFrames        = frames
-                               , lvNumFrames     = V.length frames
-                               , lvStartTime     = Nothing
-                               , lvCurrentFrame  = (-1)
-                               , lvFps           = Nothing
-                               , lvRate          = realToFrac vPlaybackRate :: Double
-                               }
+writeImageToTexture :: GL.TextureObject -> Image PixelRGBA8 -> IO ()
+writeImageToTexture textureObject image = do
+  let texWidth  = fromIntegral $ imageWidth  image
+      texHeight = fromIntegral $ imageHeight image
 
-
-setupTexture :: Int -> IO ( GL.TextureObject, GL.TextureUnit )
-setupTexture tID = do
-  -- load and create a texture
-  textureObject <- genObjectName
-  let textureUnit = (GL.TextureUnit (fromIntegral tID :: GL.GLuint))
-  GL.activeTexture $= textureUnit
+  -- bind texture (it shouldn't matter what texture unit is active right now)
+  GL.activeTexture $= GL.TextureUnit 0
   GL.textureBinding GL.Texture2D $= Just textureObject
   -- set the texture wrapping parameters
-  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
-  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
   -- set texture filtering parameters
   GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
+  SV.unsafeWith (imageData image) $ \ptr ->
+    GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGBA8
+      (GL.TextureSize2D texWidth texHeight) 0
+      (GL.PixelData GL.RGBA GL.UnsignedByte ptr)
 
-  return (textureObject, textureUnit)
+  -- TODO: try disabling mipmaps. why would they be wanted?
+  GL.generateMipmap' GL.Texture2D
 
 
-setupTexture' :: IO ( GL.TextureObject )
-setupTexture' = do
+
+setupTexture :: IO GL.TextureObject
+setupTexture = do
+  GL.activeTexture $= GL.TextureUnit 0
   -- load and create a texture
-  textureObject <- genObjectName
-  GL.activeTexture $= GL.TextureUnit (0 :: GL.GLuint)
+  textureObject <- GL.genObjectName
   GL.textureBinding GL.Texture2D $= Just textureObject
   -- set the texture wrapping parameters
-  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
-  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
+  GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+  GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
   -- set texture filtering parameters
   GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
 
   return textureObject
 
 
--- deleteTexture :: [Texture] -> Texture -> IO [Texture]
--- deleteTexture textures texture = do
---   deleteObjectName $ texObj texture
---   return $ filter (/= texture) textures
 
-
-loadVideo :: FrameGrabber PixelRGB8 -> IO () -> IO (V.Vector (GL.TextureObject, Double))
-loadVideo getFrame cleanupFFmpeg = do
+loadVideo :: Int -> FilePath -> IO Video
+loadVideo videoID videoPath = do
+  (getFrame, cleanup) <- initialiseFFmpeg videoPath
   stop <- newIORef False
 
   frames <- whileM (fmap not $ readIORef stop) $ do
-    textureObject <- setupTexture'
+    textureObject <- setupTexture
     frame <- getFrame
-    (frameRead, (dynamicImg', frameTimestamp)) <- readFrame frame
-    if frameRead then do
-      let textureRGB8  = convertRGB8 dynamicImg'
-          texWidth     = fromIntegral $ imageWidth  textureRGB8
-          texHeight    = fromIntegral $ imageHeight textureRGB8
+    case frame of
+      Nothing -> writeIORef stop True >> cleanup >> return Nothing
 
-      -- bind texture
-      GL.activeTexture $= GL.TextureUnit (0 :: GL.GLuint)
-      GL.textureBinding GL.Texture2D $= Just textureObject
-      -- set the texture wrapping parameters
-      GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
-      GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
-      -- set texture filtering parameters
-      GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
-      SV.unsafeWith (imageData textureRGB8) $ \ptr ->
-        GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGB8
-          (GL.TextureSize2D texWidth texHeight) 0
-          (GL.PixelData GL.RGB GL.UnsignedByte ptr)
-      GL.generateMipmap' GL.Texture2D
+      Just (imageRGBA8, frameTimestamp) -> do
+        let imgWidth  = fromIntegral $ imageWidth  imageRGBA8
+            imgHeight = fromIntegral $ imageHeight imageRGBA8
 
-      return (Just textureObject, frameTimestamp)
-    else do
-      writeIORef stop True
-      cleanupFFmpeg
-      return (Nothing, frameTimestamp)
-
-  return $ V.fromList $ map (\(Just tObj, ts) -> (tObj, ts))
-                      $ filter (\(mbTexObj, _) -> isJust mbTexObj)
-                      $ frames
-
-
-freeTexture :: WindowID -> Texture -> IO ()
-freeTexture winID (Vid vid) = do
-  putStrLn $ "*** Info: Window "+|winID|+" - running FFmpeg cleanup for texture "+|texID vid|+""
-  vCleanupFFmpeg vid
-  deleteObjectName (vTexObj vid)
-freeTexture _wID  (Img img) = deleteObjectName (iTexObj img)
-freeTexture winID (LVd vid) = do
-  putStrLn $ "*** Info: Window "+|winID|+" - freeing frames for texture "+|texID vid|+""
-  let frames  = lvFrames vid
-      size    = V.length frames
-      texObjs = SV.generate size $ \i -> (\(GL.TextureObject t) -> t) $ fst (frames V.! i)
-  SV.unsafeWith texObjs $ \ptr ->
-    glDeleteTextures (fromIntegral size :: GLsizei) ptr
-  deleteObjectNames $ map (\t -> GL.TextureObject t) $ SV.toList texObjs
-
-
-updateTextures :: GL.Program -> [Texture] -> IO [Texture]
-updateTextures shaderProgram textures =
-  let vids = map (\(Vid t) -> t) $ filter isVid textures
-      imgs = map (\(Img t) -> t) $ filter isImg textures
-      lvds = map (\(LVd t) -> t) $ filter isLVd textures
-  in do
-    updatedImages <- forM imgs (updateImage shaderProgram)
-    updatedVideos <- updateVideos shaderProgram vids
-    updatedLVids  <- forM lvds (updateLVid shaderProgram)
-    return $ map fromJust $ filter isJust (updatedImages ++ updatedVideos ++ updatedLVids)
-  where isVid (Vid _) = True
-        isVid _       = False
-        isImg (Img _) = True
-        isImg _       = False
-        isLVd (LVd _) = True
-        isLVd _       = False
-
-updateImage :: GL.Program -> ImageTexture -> IO (Maybe Texture)
-updateImage shaderProgram texture =
-  if (length (assignments texture) == 0) || (iIsBound texture)
-    then return $ Just (Img texture)
-    else do
-      bindTexture shaderProgram texture (iImageRGB8 texture)
-      return $ Just $ Img $ ImageTexture (texObj texture)
-                                         (texUnit texture)
-                                         (assignments texture)
-                                         (iID texture)
-                                         (iImageRGB8 texture)
-                                         True -- mark texture as bound
-
-updateVideos :: GL.Program -> [VideoTexture] -> IO [Maybe Texture]
-updateVideos shaderProgram textures = do
-  updated <- flip forkMapM textures $ \texture ->
-    if length (assignments texture) == 0 then -- if not active then
-      if isNothing (vStartTime texture)       --     do nothing
-        then return $ (Just $ Vid texture, Nothing)
-        else return $ (Just $ Vid $ texture { vStartTime = Nothing }, Nothing)
-    else if vRate texture <= 0 then           -- else if the rate is 0 or less then
-      return $ (Just $ Vid texture, Nothing)  --     do nothing
-    else do                                   -- else
-      let getFrame      = vNextFrame texture  --     display the next frame
-          cleanupFFmpeg = vCleanupFFmpeg texture
-          frameIndex    = (vCurrentFrame texture) + 1
-          frameIndexD   = fromIntegral frameIndex :: Double
-          startTime     = vStartTime texture
-          fps           = vFps texture
-          frameInterval = 1 / (fromMaybe 24.0 fps)
-          rate          = vRate texture
-
-      glCurrentTime <- GLFW.getTime
-      let currentTime = fromMaybe 0.0 $ ((fromMaybe 0.0 glCurrentTime) -) <$> startTime
-          scheduledTime =  frameIndexD * frameInterval * (1 / rate)
-
-      if currentTime < scheduledTime && not (currentTime == 0.0) then do
-        return $ (Just (Vid texture), Nothing)
-      else do
-        let skippedFrames = if isJust startTime
-                              then floor $ (currentTime - scheduledTime) / frameInterval
-                              else 0
-        -- skip over any missed frames
-        replicateM_ skippedFrames getFrame
-
-        frame <- getFrame
-        (frameRead, (dynamicImg', frameTimestamp)) <- readFrame frame
-        if frameRead then do
-          -- bindTexture shaderProgram texture (convertRGB8 dynamicImg')
-          let img = convertRGB8 dynamicImg'
-          glCurrentTime' <- GLFW.getTime
-          img `seq` return (Just $ Vid $ VideoTexture (texObj texture)
-                                             (texUnit texture)
-                                             (assignments texture)
-                                             (vID texture)
-                                             (vLoop texture)
-                                             (vFilePath texture)
-                                             getFrame
-                                             cleanupFFmpeg
-                                             (if isNothing startTime then
-                                                (\t -> t - scheduledTime) <$> glCurrentTime'
-                                              else startTime)
-                                             frameIndex
-                                             (if frameIndex >= 1 && isNothing fps then
-                                                Just (frameIndexD / frameTimestamp)
-                                              else fps)
-                                             (vRate texture)
-                            , Just img)
-        else if vLoop texture then do
-          (getFrame', cleanupFFmpeg') <- loopVideo cleanupFFmpeg (vFilePath texture)
-          frame1           <- getFrame'
-          (_, (dynamicImg1, _frameTimestamp')) <- readFrame frame1
-          -- bindTexture shaderProgram texture (convertRGB8 dynamicImg1)
-          let img = convertRGB8 dynamicImg1
-          glCurrentTime' <- GLFW.getTime
-          img `seq` return (Just $ Vid $ VideoTexture (texObj texture)
-                                             (texUnit texture)
-                                             (assignments texture)
-                                             (vID texture)
-                                             (vLoop texture)
-                                             (vFilePath texture)
-                                             getFrame'
-                                             cleanupFFmpeg'
-                                             glCurrentTime'
-                                             0
-                                             (vFps texture)
-                                             (vRate texture)
-                            , Just img)
-          else do -- video has finished and is set to not loop
-            cleanupFFmpeg
-            return (Nothing, Nothing)
-
-  updatedTextures <- forM (zip [0..] updated) $ \vidDataOrErr ->
-    case vidDataOrErr of
-      (i, Left _error) -> return $ Just $ Vid (textures !! i)
-      (_, Right (tex, Nothing)) -> return tex
-      (_, Right (Just tex, Just img)) -> do
-        bindTexture shaderProgram tex img
-        return $ Just tex
-      (_, Right (Nothing, _)) -> return Nothing
-
-  return updatedTextures
-
-
-updateLVid :: GL.Program -> LoadedVideo -> IO (Maybe Texture)
-updateLVid shaderProgram texture =
-  if length (assignments texture) == 0 then -- if not active then
-    if isNothing (lvStartTime texture)       --     do nothing
-      then return $ Just $ LVd texture
-      else return $ Just $ LVd $ texture { lvStartTime = Nothing }
-  else if lvRate texture <= 0 then           -- else if the rate is 0 or less then
-    return $ Just $ LVd texture             --     do nothing
-  else do                                   -- else
-    let frameIndex    = (lvCurrentFrame texture) + 1
-        frameIndexD   = fromIntegral frameIndex :: Double
-        startTime     = lvStartTime texture
-        fps           = lvFps texture
-        frameInterval = 1 / (fromMaybe 24.0 fps)
-        rate          = lvRate texture
-
-    glCurrentTime <- GLFW.getTime
-    let currentTime = fromMaybe 0.0 $ ((fromMaybe 0.0 glCurrentTime) -) <$> startTime
-        scheduledTime =  frameIndexD * frameInterval * (1 / rate)
-
-    if currentTime < scheduledTime && not (currentTime == 0.0) then do
-      return $ Just (LVd texture)
-    else do
-      let skippedFrames = if isJust startTime
-                            then floor $ (currentTime - scheduledTime) / frameInterval
-                            else 0
-          newFrameIndex = frameIndex + skippedFrames
-
-      -- skip over any missed frames
-      -- replicateM_ skippedFrames getFrame
-
-      if newFrameIndex < (lvNumFrames texture) then do
-        let frame = (lvFrames texture) V.! newFrameIndex
-
-        bindTexture' shaderProgram texture frame
-        glCurrentTime' <- GLFW.getTime
-        return $ Just $ LVd $ LoadedVideo (texUnit texture)
-                                           (assignments texture)
-                                           (lvID texture)
-                                           (lvLoop texture)
-                                           (lvFrames texture)
-                                           (lvNumFrames texture)
-                                           (if isNothing startTime then
-                                              (\t -> t - scheduledTime) <$> glCurrentTime'
-                                            else startTime)
-                                           frameIndex
-                                           (if frameIndex >= 1 && isNothing fps then
-                                              Just (frameIndexD / (snd frame))
-                                            else fps)
-                                           (lvRate texture)
-      else if lvLoop texture then do
-        let frame0 = V.head (lvFrames texture)
-        bindTexture' shaderProgram texture frame0
-        glCurrentTime' <- GLFW.getTime
-        return $ Just $ LVd $ LoadedVideo (texUnit texture)
-                                           (assignments texture)
-                                           (lvID texture)
-                                           (lvLoop texture)
-                                           (lvFrames texture)
-                                           (lvNumFrames texture)
-                                           glCurrentTime'
-                                           0
-                                           (lvFps texture)
-                                           (lvRate texture)
-      else do -- video has finished and is set to not loop
-        forM_ (lvFrames texture) $ \(tObj, _) ->
-          deleteObjectName tObj
-        return Nothing
-
-
-bindTexture :: TextureClass t => GL.Program -> t -> Image PixelRGB8 -> IO ()
-bindTexture shaderProgram texture textureRGB8 = do
-  let texWidth     = fromIntegral $ imageWidth  textureRGB8
-      texHeight    = fromIntegral $ imageHeight textureRGB8
-      texData      = imageData textureRGB8
-      textureObject = texObj texture
-      textureUnit   = texUnit texture
-  forM_ (assignments texture) $ \(gID, uID, uIn) -> do
-    -- must activate/use the shader before setting uniforms
-    GL.currentProgram $= Just shaderProgram
-
-    GL.activeTexture $= textureUnit
-    texLocation <- GL.uniformLocation shaderProgram $ uniformName gID uID uIn
-    -- putStrLn $ uniformName gID uID uIn
-
-    if texLocation >= (GL.UniformLocation 0)
-      then do
-        GL.uniform texLocation $= textureUnit
-
+        GL.activeTexture $= GL.TextureUnit 0
         -- bind texture
-        GL.activeTexture $= textureUnit
         GL.textureBinding GL.Texture2D $= Just textureObject
         -- set the texture wrapping parameters
-        GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.Repeat)
-        GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.Repeat)
+        GL.textureWrapMode GL.Texture2D GL.S $= (GL.Repeated, GL.ClampToBorder)
+        GL.textureWrapMode GL.Texture2D GL.T $= (GL.Repeated, GL.ClampToBorder)
+        GL.textureBorderColor GL.Texture2D $= GL.Color4 0.0 0.0 0.0 0.0
         -- set texture filtering parameters
         GL.textureFilter GL.Texture2D $= ((GL.Linear', Just GL.Linear'), GL.Linear')
-        SV.unsafeWith texData $ \ptr ->
-          GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGB8
-            (GL.TextureSize2D texWidth texHeight) 0
-            (GL.PixelData GL.RGB GL.UnsignedByte ptr)
+        SV.unsafeWith (imageData imageRGBA8) $ \ptr ->
+          GL.texImage2D GL.Texture2D GL.NoProxy 0 GL.RGBA8
+            (GL.TextureSize2D imgWidth imgHeight) 0
+            (GL.PixelData GL.RGBA GL.UnsignedByte ptr)
         GL.generateMipmap' GL.Texture2D
 
-      else return ()
+        return $ Just (textureObject, frameTimestamp)
+
+  let videoFrames = V.fromList $ map fromJust $ filter isJust $ frames
+  videoFramesRef <- newIORef videoFrames
+  let videoData = VideoData { vFrames = videoFramesRef
+                            , vNumFrames = V.length videoFrames
+                            }
+      videoFile = VideoFile { vID = videoID
+                            , vFilePath = videoPath
+                            }
+  return $ InMemVid videoFile videoData
 
 
-bindTexture' :: TextureClass t => GL.Program -> t -> (GL.TextureObject, Double) -> IO ()
-bindTexture' shaderProgram texture (textureObject, _ts) = do
-  let textureUnit = texUnit texture
 
-  forM_ (assignments texture) $ \(gID, uID, uIn) -> do
-    -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    -- !! don't forget to activate/use the shader before setting uniforms! !!
-    -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    GL.currentProgram $= Just shaderProgram
+bindInputBus :: WireID -> Bus -> RIO ShaderState Bool
+bindInputBus wire (Bus _ tObj) = ask >>= \env -> liftIO $ do
+  texUnits <- readIORef $ ssTextureUnits env
+  case texUnits of
+    [] -> do
+      putStrLn "*** Error: not enough texture units available to display image/video."
+      return False
+    (t:ts) -> do
+      texLocation <- GL.uniformLocation (ssShaderProgram env) $ "u_Bus_Local_" ++ (show wire)
+      if texLocation >= (GL.UniformLocation 0)
+        then do
+          GL.currentProgram $= Just (ssShaderProgram env)
+          -- putStrLn $ "*** Debug: bindInputBus "+||tObj||+" using "+||t||+""
+          -- bind texture
+          GL.activeTexture $= t
+          GL.textureBinding GL.Texture2D $= Just tObj
+          -- set the uniform location to this texture unit
+          GL.uniform texLocation $= t
+          -- set active texture back to default
+          GL.activeTexture $= GL.TextureUnit 0
+          -- update the available texture units
+          writeIORef (ssTextureUnits env) ts
+          return True
 
-    GL.activeTexture $= textureUnit
-    texLocation <- GL.uniformLocation shaderProgram $ uniformName gID uID uIn
-    -- putStrLn $ uniformName gID uID uIn
+      else return False
 
-    if texLocation >= (GL.UniformLocation 0)
-      then do
-        GL.uniform texLocation $= textureUnit
 
+
+bindTexture :: GL.TextureObject -> Assignment -> RIO ShaderState Bool
+bindTexture textureObject (gID, uID, uIn) = ask >>= \env -> liftIO $ do
+  texUnits <- readIORef $ ssTextureUnits env
+  case texUnits of
+    [] -> do
+      putStrLn "*** Error: not enough texture units available to display image/video."
+      return False
+    (t:ts) -> do
+      let uniform = Text.unpack $ uniformName gID uID uIn
+      texLocation <- GL.uniformLocation (ssShaderProgram env) uniform
+
+      if texLocation >= (GL.UniformLocation 0) then do
+        GL.currentProgram $= Just (ssShaderProgram env)
+        -- putStrLn $ "*** Debug: bindTexture "+||textureObject||+" using "+||t||+""
         -- bind texture
-        GL.activeTexture $= textureUnit
+        GL.activeTexture $= t
         GL.textureBinding GL.Texture2D $= Just textureObject
+        -- set the uniform location to this texture unit
+        GL.uniform texLocation $= t
+        -- set active texture back to default
+        GL.activeTexture $= GL.TextureUnit 0
+        -- update the available texture units
+        writeIORef (ssTextureUnits env) ts
+        return True
 
-    else return ()
-
-
-loopVideo :: JuicyPixelFormat p
-          => IO ()
-          -> FilePath
-          -> IO (FrameGrabber p, IO ())
-loopVideo cleanupFFmpeg videoFile = do
-  cleanupFFmpeg
-  (getFrame', cleanupFFmpeg') <- F.imageReaderTime $ F.File videoFile
-  return (getFrame', cleanupFFmpeg')
+      else return False
 
 
-readFrame :: Maybe (Image PixelRGB8, Double) -> IO (Bool, (DynamicImage, Double))
-readFrame frame =
-  case frame of
-    Just (img, time) -> return (True, (ImageRGB8 img, time))
-    Nothing ->
-      return (False, ((ImageRGB8 $
-        generateImage (\x y ->
-          let x' = fromIntegral x
-              y' = fromIntegral y
-              z' = fromIntegral $ x + y
-          in PixelRGB8 x' y' z')
-        256 256), 0.0))
+
+{- bindTexture' takes the uniform location instead of the assignment to avoid
+   constructing the uniform name string and looking it up in the shader program
+   again. This can be used whenever the uniform location will have already been
+   looked up such as when checking if a texture can be bound in that shader
+   program. Since this is a major cost centre (run extremely often in the
+   execution of the program), it is a worthwhile optimisation.
+-}
+bindTexture' :: GL.TextureObject -> GL.UniformLocation -> RIO ShaderState Bool
+bindTexture' textureObject texLocation = ask >>= \env -> liftIO $ do
+  texUnits <- readIORef $ ssTextureUnits env
+  case texUnits of
+    [] -> do
+      putStrLn "*** Error: not enough texture units available to display image/video."
+      return False
+    (t:ts) -> do
+      if texLocation >= (GL.UniformLocation 0) then do
+        GL.currentProgram $= Just (ssShaderProgram env)
+        -- putStrLn $ "*** Debug: bindTexture "+||textureObject||+" using "+||t||+""
+        -- bind texture
+        GL.activeTexture $= t
+        GL.textureBinding GL.Texture2D $= Just textureObject
+        -- set the uniform location to this texture unit
+        GL.uniform texLocation $= t
+        -- set active texture back to default
+        GL.activeTexture $= GL.TextureUnit 0
+        -- update the available texture units
+        writeIORef (ssTextureUnits env) ts
+        return True
+
+      else return False
+
+
+
+canBindTexture :: Assignment -> RIO ShaderState Bool
+canBindTexture (gID, uID, uIn) = ask >>= \env -> liftIO $ do
+  let uniform = Text.unpack $ uniformName gID uID uIn
+  texLocation <- GL.uniformLocation (ssShaderProgram env) uniform
+  return $ texLocation >= (GL.UniformLocation 0)
+
+
+
+getUniformLocation :: Assignment -> RIO ShaderState (Maybe GL.UniformLocation)
+getUniformLocation (gID, uID, uIn) = ask >>= \env -> liftIO $ do
+  let uniform = Text.unpack $ uniformName gID uID uIn
+  location <- GL.uniformLocation (ssShaderProgram env) uniform
+  if location >= (GL.UniformLocation 0)
+    then return $ Just location
+    else return Nothing

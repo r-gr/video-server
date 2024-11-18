@@ -26,6 +26,7 @@ dependencies:
 - bytestring
 - containers
 - directory
+- extra
 - ffmpeg-light
 - file-embed
 - fmt
@@ -33,16 +34,20 @@ dependencies:
 - MissingH
 - JuicyPixels
 - monad-loops
+- mtl
 - ObjectName
 - OpenGL
 - OpenGLRaw
+- optparse-applicative
 # pretty-simple: pretty printing in development via Text.Pretty.Simple
 # (pPrint) for any types deriving/implementing Show.
 - pretty-simple
 - random
+- rio
 - signal
 - split
 - stm
+- transformers
 - vector
 - zeromq4-haskell
 
@@ -50,15 +55,67 @@ library:
   source-dirs: src
 
 executables:
-  video-server-exe:
+  video-server:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    - -Wall
+    - -Wcompat
+    - -Widentities
+    - -Wincomplete-record-updates
+    # - -Wincomplete-uni-patterns
+    # - -Wpartial-fields
+    - -Wredundant-constraints
+    - -Werror=missing-fields
     dependencies:
     - video-server
+
+default-extensions:
+# - AutoDeriveTypeable  # -XAutoDeriveTypeable is deprecated: Typeable instances are created automatically for all types since GHC 8.2.
+- BangPatterns
+- BinaryLiterals
+- ConstraintKinds
+- DataKinds
+- DefaultSignatures
+- DeriveDataTypeable
+- DeriveFoldable
+- DeriveFunctor
+- DeriveGeneric
+- DeriveTraversable
+- DoAndIfThenElse
+# NOTE: the following isn't one of commericalhaskell's recommended extensions
+- DuplicateRecordFields
+#
+- EmptyDataDecls
+- ExistentialQuantification
+- FlexibleContexts
+- FlexibleInstances
+- FunctionalDependencies
+- GADTs
+- GeneralizedNewtypeDeriving
+- InstanceSigs
+- KindSignatures
+- LambdaCase
+# - MonadFailDesugaring  # -XMonadFailDesugaring is deprecated: MonadFailDesugaring is now the default behavior
+- MultiParamTypeClasses
+- MultiWayIf
+- NamedFieldPuns
+- NoImplicitPrelude
+- OverloadedStrings
+- PartialTypeSignatures
+- PatternGuards
+- PolyKinds
+- RankNTypes
+- RecordWildCards
+- ScopedTypeVariables
+- StandaloneDeriving
+- TupleSections
+- TypeFamilies
+- TypeSynonymInstances
+- ViewPatterns
 
 #tests:
 #  video-server-test:

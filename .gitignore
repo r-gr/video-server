@@ -1,3 +1,6 @@
 .stack-work/
+stack.yaml.lock
 video-server.cabal
 *~
+.DS_Store
+.vscode/

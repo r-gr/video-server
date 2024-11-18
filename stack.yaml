@@ -18,15 +18,16 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 # resolver: lts-12.21
-resolver: lts-13.26
+# resolver: lts-13.26
+resolver: lts-18.28
 
 # Support building against musl libc rather than glibc. The GHC version below
 # must match the GHC version used by the above resolver.
-setup-info:
-  ghc:
-    linux64-ncurses6:
-      8.6.5:
-        url: "https://github.com/redneb/ghc-alt-libc/releases/download/ghc-8.6.5-musl/ghc-8.6.5-x86_64-unknown-linux-musl.tar.xz"
+# setup-info:
+#   ghc:
+#     linux64-ncurses6:
+#       8.6.5:
+#         url: "https://github.com/redneb/ghc-alt-libc/releases/download/ghc-8.6.5-musl/ghc-8.6.5-x86_64-unknown-linux-musl.tar.xz"
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -69,6 +70,10 @@ allow-newer: true
 ghc-options:
   # "$everything": -O2 -fllvm
   "$everything": -O2
+
+build:
+  library-profiling: false
+  executable-profiling: false
 
 # Control whether we use the GHC we find on the path
 # system-ghc: true
