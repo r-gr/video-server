@@ -53,7 +53,7 @@ It exists
 
 ## How is it?
 
-It's doing well thanks.
+Good, thanks.
 
 ## Building and installation
 
@@ -87,6 +87,59 @@ some point, potentially make some modifications to make it compatible, and
 update this README. It might build on Windows since it doesn't rely heavily on
 Unix/POSIX-isms but I haven't tested it and probably won't any time soon (anyone
 reading this is welcome to try though).
+
+### Building on macOS
+
+Install Haskell toolchain with [GCHup](https://www.haskell.org/ghcup/). Tested with:
+* GHCUp 0.1.18.0
+* Stack 2.7.5
+* cabal 3.6.2.0
+* GHC 8.10.7
+
+Ensure an LLVM version between 9 and 13 is installed using Homebrew. As of the
+time of writing, the main LLVM version installed by Homebrew is v14, which
+causes Stack to throw a compile error.
+
+If `llvm@13` is installed with Homebrew, prepend its bin dir to the `PATH` e.g.
+
+Fish shell:
+```fish
+fish_add_path -pP /opt/homebrew/opt/llvm@13/bin
+```
+
+Bash:
+```bash
+export PATH=/opt/homebrew/opt/llvm@13/bin:$PATH
+```
+
+The current main ffmpeg version installed by Homebrew (v5) results in build
+errors for the ffmpeg-light dependency. Install an older version of ffmpeg to
+make ffmpeg-light work:
+
+```
+brew install ffmpeg@4
+```
+
+Fish shell:
+```fish
+fish_add_path -pP /opt/homebrew/opt/ffmpeg@4/bin
+set -gx LDFLAGS "-L/opt/homebrew/opt/ffmpeg@4/lib"
+set -gx CPPFLAGS "-I/opt/homebrew/opt/ffmpeg@4/include"
+set -gx PKG_CONFIG_PATH "/opt/homebrew/opt/ffmpeg@4/lib/pkgconfig"
+```
+
+Bash:
+```bash
+export PATH=/opt/homebrew/opt/ffmpeg@4/bin:$PATH
+export LDFLAGS="-L/opt/homebrew/opt/ffmpeg@4/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/ffmpeg@4/include"
+export PKG_CONFIG_PATH="/opt/homebrew/opt/ffmpeg@4/lib/pkgconfig"
+```
+
+Run with `stack run`.
+
+(For building supercollider-av, `brew install qt5` and follow instructions in
+`README_MACOS.md`.)
 
 ## What is it? The full technical description.
 

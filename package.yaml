@@ -74,7 +74,7 @@ executables:
     - video-server
 
 default-extensions:
-- AutoDeriveTypeable
+# - AutoDeriveTypeable  # -XAutoDeriveTypeable is deprecated: Typeable instances are created automatically for all types since GHC 8.2.
 - BangPatterns
 - BinaryLiterals
 - ConstraintKinds
@@ -99,7 +99,7 @@ default-extensions:
 - InstanceSigs
 - KindSignatures
 - LambdaCase
-- MonadFailDesugaring
+# - MonadFailDesugaring  # -XMonadFailDesugaring is deprecated: MonadFailDesugaring is now the default behavior
 - MultiParamTypeClasses
 - MultiWayIf
 - NamedFieldPuns
